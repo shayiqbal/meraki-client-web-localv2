@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from pathlib import Path
 
+import requests
 from fastapi.testclient import TestClient
 
 from webapp.app import _sessions, app
@@ -83,3 +84,33 @@ def test_login_validation_has_a_bounded_direct_meraki_request():
     source = (Path(__file__).parents[1] / "webapp" / "routers" / "auth.py").read_text()
     assert '"https://api.meraki.com/api/v1/organizations"' in source
     assert "timeout=(5, 15)" in source
+
+
+def test_login_surfaces_invalid_key_and_timeout_errors(monkeypatch):
+    def invalid_key(*args, **kwargs):
+        class Response:
+            status_code = 401
+            ok = False
+        return Response()
+
+    monkeypatch.setattr("webapp.routers.auth.requests.get", invalid_key)
+    client = TestClient(app)
+    invalid = client.post("/api/login", json={"api_key": "not-valid"})
+    assert invalid.status_code == 401
+    assert "Invalid API key" in invalid.json()["detail"]
+
+    monkeypatch.setattr(
+        "webapp.routers.auth.requests.get",
+        lambda *args, **kwargs: (_ for _ in ()).throw(requests.Timeout()),
+    )
+    timeout = client.post("/api/login", json={"api_key": "not-valid"})
+    assert timeout.status_code == 504
+    assert "15 seconds" in timeout.json()["detail"]
+
+
+def test_build_52_is_visible_on_login_page():
+    client = TestClient(app)
+    response = client.get("/")
+    assert response.status_code == 200
+    assert "Meraki Config Manager V2" in response.text
+    assert "Build 52" in response.text

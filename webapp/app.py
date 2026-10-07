@@ -118,8 +118,6 @@ async def validation_exception_handler(request: Request, exc: RequestValidationE
 
 @app.exception_handler(StarletteHTTPException)
 async def http_exception_handler(request: Request, exc: StarletteHTTPException) -> JSONResponse:
-    if exc.status_code >= 500:
-        return JSONResponse(status_code=exc.status_code, content={"detail": "Meraki request failed. Try again later."})
     return JSONResponse(status_code=exc.status_code, content={"detail": str(exc.detail)})
 
 
