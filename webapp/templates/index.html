@@ -13,7 +13,7 @@
 <!-- ══════════════════════════════════════════════════════════ LOGIN ═══════ -->
 <div class="login-wrap" x-show="!authenticated" x-cloak>
   <div class="login-card">
-    <div class="login-logo">Meraki Config Manager</div>
+    <div class="login-logo">Meraki Config Manager V2</div>
     <div class="login-sub">Enter your Cisco Meraki API key to continue</div>
 
     <form @submit.prevent="login()">
@@ -28,7 +28,7 @@
       </button>
     </form>
     <hr/>
-    <p class="text-muted small mb-0">Your API key is validated against Meraki and held in memory only for this session.</p>
+    <p class="text-muted small mb-0">Build 52. API key validation has a 15-second Meraki timeout and remains in memory only for this session.</p>
   </div>
 </div>
 

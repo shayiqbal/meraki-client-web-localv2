@@ -8,14 +8,7 @@ from webapp.app import _sessions, app
 
 
 def test_security_headers_and_cookie_session(monkeypatch):
-    class Client:
-        def __init__(self, *args, **kwargs):
-            pass
-
-        def organizations(self):
-            return [{"id": "org", "name": "Org"}]
-
-    monkeypatch.setattr("webapp.routers.auth.MerakiVpnClientV1", Client)
+    monkeypatch.setattr("webapp.routers.auth.validate_api_key", lambda key: [{"id": "org", "name": "Org"}])
     client = TestClient(app)
 
     response = client.post("/api/login", json={"api_key": "fake-api-key"})
@@ -53,14 +46,7 @@ def test_every_authenticated_post_route_declares_csrf_protection():
 
 
 def test_logout_removes_the_in_memory_api_key(monkeypatch):
-    class Client:
-        def __init__(self, *args, **kwargs):
-            pass
-
-        def organizations(self):
-            return []
-
-    monkeypatch.setattr("webapp.routers.auth.MerakiVpnClientV1", Client)
+    monkeypatch.setattr("webapp.routers.auth.validate_api_key", lambda key: [])
     client = TestClient(app)
     response = client.post("/api/login", json={"api_key": "test-api-key-only-in-memory"})
     csrf = response.json()["csrf_token"]
@@ -91,3 +77,9 @@ def test_frontend_api_requests_have_a_timeout():
     client_code = (Path(__file__).parents[1] / "webapp" / "static" / "app.js").read_text()
     assert "AbortController" in client_code
     assert "Request timed out" in client_code
+
+
+def test_login_validation_has_a_bounded_direct_meraki_request():
+    source = (Path(__file__).parents[1] / "webapp" / "routers" / "auth.py").read_text()
+    assert '"https://api.meraki.com/api/v1/organizations"' in source
+    assert "timeout=(5, 15)" in source

@@ -1,22 +1,42 @@
 """Auth router — API key login / logout."""
 from __future__ import annotations
 
-import logging
-
+import requests
 from fastapi import APIRouter, Depends, HTTPException, Request, Response
 from pydantic import BaseModel
 
-from config.settings import Settings
-from meraki_client.client_v1 import MerakiVpnClientV1
-from meraki_client.exceptions import AuthenticationError
 from webapp.session import require_csrf, require_session
 
 router = APIRouter(tags=["auth"])
-log = logging.getLogger("webapp.auth")
 
 
 class LoginRequest(BaseModel):
     api_key: str
+
+
+def validate_api_key(api_key: str) -> list[dict]:
+    """Validate credentials with one bounded HTTPS call before opening a session."""
+    try:
+        response = requests.get(
+            "https://api.meraki.com/api/v1/organizations",
+            headers={"X-Cisco-Meraki-API-Key": api_key},
+            timeout=(5, 15),
+        )
+    except requests.Timeout as exc:
+        raise HTTPException(504, "Meraki did not respond within 15 seconds. Check your VPN, proxy, firewall, and internet connection.") from exc
+    except requests.RequestException as exc:
+        raise HTTPException(502, "Could not reach Meraki. Check your VPN, proxy, firewall, and internet connection.") from exc
+    if response.status_code in {401, 403}:
+        raise HTTPException(401, "Invalid API key or insufficient Meraki permissions.")
+    if not response.ok:
+        raise HTTPException(502, "Meraki could not validate the API key. Try again later.")
+    try:
+        payload = response.json()
+    except ValueError as exc:
+        raise HTTPException(502, "Meraki returned an invalid validation response.") from exc
+    if not isinstance(payload, list):
+        raise HTTPException(502, "Meraki returned an unexpected validation response.")
+    return payload
 
 
 @router.post("/login")
@@ -24,16 +44,7 @@ def login(body: LoginRequest, request: Request, response: Response) -> dict:
     key = body.api_key.strip()
     if not key:
         raise HTTPException(400, "API key is required.")
-    try:
-        client = MerakiVpnClientV1(
-            settings=Settings(api_key=key),
-            logger=log,
-        )
-        orgs = client.organizations()
-    except AuthenticationError:
-        raise HTTPException(401, "Invalid API key — Meraki rejected authentication.")
-    except Exception:
-        raise HTTPException(502, "Could not reach Meraki. Try again later.")
+    orgs = validate_api_key(key)
 
     sid = request.app.state.create_session(key)
     response.set_cookie(
