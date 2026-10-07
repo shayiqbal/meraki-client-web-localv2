@@ -78,7 +78,9 @@ class SecurityHeadersMiddleware(BaseHTTPMiddleware):
         response.headers["Permissions-Policy"] = "camera=(), microphone=(), geolocation=()"
         response.headers["Content-Security-Policy"] = (
             "default-src 'self'; style-src 'self' https://cdn.jsdelivr.net; "
-            "font-src 'self'; script-src 'self' https://cdn.jsdelivr.net; "
+            # Alpine's directive expressions require dynamic evaluation. Inline
+            # scripts remain blocked and CDN assets are integrity-pinned.
+            "font-src 'self'; script-src 'self' https://cdn.jsdelivr.net 'unsafe-eval'; "
             "connect-src 'self'; img-src 'self' data:; object-src 'none'; "
             "base-uri 'none'; frame-ancestors 'none'"
         )

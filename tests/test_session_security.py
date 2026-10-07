@@ -89,6 +89,13 @@ def test_login_has_a_visible_bounded_validation_state():
     assert "loginStatus" in template
 
 
+def test_csp_allows_the_alpine_expression_runtime_but_not_inline_scripts():
+    client = TestClient(app)
+    csp = client.get("/").headers["content-security-policy"]
+    assert "script-src 'self' https://cdn.jsdelivr.net 'unsafe-eval'" in csp
+    assert "'unsafe-inline'" not in csp
+
+
 def test_login_validation_has_a_bounded_direct_meraki_request():
     source = (Path(__file__).parents[1] / "webapp" / "routers" / "auth.py").read_text()
     assert '"https://api.meraki.com/api/v1/organizations"' in source
