@@ -34,6 +34,7 @@ class MerakiVpnClient:
             suppress_logging=True,
             print_console=False,
             wait_on_rate_limit=False,
+            single_request_timeout=20,
             # The SDK treats zero as "perform zero HTTP attempts" and later
             # dereferences a None response. One attempt disables SDK-level
             # retries while allowing this client's RetryPolicy to control them.

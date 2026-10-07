@@ -85,3 +85,9 @@ def test_frontend_dependency_integrity_hashes_are_exact():
     assert "sha384-QWTKZyjpPEjISv5WaRU9OFeRpok6YctnYmDr5pNlyT2bRjXh0JMhjY6hW+ALEwIH" in template
     assert "sha384-YvpcrYf0tY3lHB60NNkmXc5s9fDVZLESaAA55NDzOxhy9GkcIdslK1eN7N6jIeHz" in template
     assert "sha384-l8f0VcPi/M1iHPv8egOnY/15TDwqgbOR1anMIJWvU6nLRgZVLTLSaNqi/TOoT5Fh" in template
+
+
+def test_frontend_api_requests_have_a_timeout():
+    client_code = (Path(__file__).parents[1] / "webapp" / "static" / "app.js").read_text()
+    assert "AbortController" in client_code
+    assert "Request timed out" in client_code

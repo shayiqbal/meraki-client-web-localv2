@@ -933,22 +933,32 @@ function app() {
     // API helpers
     // =========================================================================
     async api(method, path, body) {
+      const controller = new AbortController();
+      const timeout = setTimeout(() => controller.abort(), 30000);
       const opts = {
         method,
         credentials: 'same-origin',
         headers: {},
+        signal: controller.signal,
       };
       if (!['GET', 'HEAD', 'OPTIONS'].includes(method)) opts.headers['X-CSRF-Token'] = this.csrfToken;
       if (body) {
         opts.headers['Content-Type'] = 'application/json';
         opts.body = JSON.stringify(body);
       }
-      const res = await fetch(path, opts);
-      if (!res.ok) {
-        const err = await res.json().catch(() => ({ detail: res.statusText }));
-        throw new Error(err.detail || 'Request failed');
+      try {
+        const res = await fetch(path, opts);
+        if (!res.ok) {
+          const err = await res.json().catch(() => ({ detail: res.statusText }));
+          throw new Error(err.detail || 'Request failed');
+        }
+        return res.json();
+      } catch (error) {
+        if (error.name === 'AbortError') throw new Error('Request timed out. Check your internet connection, proxy/VPN, and access to api.meraki.com.');
+        throw error;
+      } finally {
+        clearTimeout(timeout);
       }
-      return res.json();
     },
 
     async apiForm(path, formData) {
