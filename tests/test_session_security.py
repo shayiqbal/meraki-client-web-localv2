@@ -78,3 +78,10 @@ def test_source_has_no_browser_or_disk_credential_storage():
     assert "localStorage" not in client_code
     assert "sessionStorage" not in client_code
     assert "X-Session-ID" not in client_code
+
+
+def test_frontend_dependency_integrity_hashes_are_exact():
+    template = (Path(__file__).parents[1] / "webapp" / "templates" / "index.html").read_text()
+    assert "sha384-QWTKZyjpPEjISv5WaRU9OFeRpok6YctnYmDr5pNlyT2bRjXh0JMhjY6hW+ALEwIH" in template
+    assert "sha384-YvpcrYf0tY3lHB60NNkmXc5s9fDVZLESaAA55NDzOxhy9GkcIdslK1eN7N6jIeHz" in template
+    assert "sha384-l8f0VcPi/M1iHPv8egOnY/15TDwqgbOR1anMIJWvU6nLRgZVLTLSaNqi/TOoT5Fh" in template
