@@ -1,0 +1,96 @@
+/* Meraki Config Manager – Web UI */
+
+:root {
+  --sidebar-bg: #1e2533;
+  --sidebar-hover: #2d3548;
+  --sidebar-active: #3b82f6;
+  --sidebar-text: #a0aec0;
+  --sidebar-text-active: #fff;
+  --topbar-h: 60px;
+  --sidebar-w: 230px;
+  --accent: #3b82f6;
+  --success: #22c55e;
+  --danger: #ef4444;
+  --warning: #f59e0b;
+}
+
+body { margin: 0; font-family: 'Segoe UI', system-ui, sans-serif; background: #f8fafc; }
+
+/* ── Login ── */
+.login-wrap { min-height: 100vh; display: flex; align-items: center; justify-content: center; background: linear-gradient(135deg, #1e2533 0%, #2d3548 100%); }
+.login-card { background: #fff; border-radius: 12px; padding: 2.5rem 2rem; width: 400px; box-shadow: 0 20px 60px rgba(0,0,0,.4); }
+.login-logo { font-size: 1.4rem; font-weight: 700; color: #1e2533; margin-bottom: .25rem; }
+.login-sub { color: #64748b; font-size: .875rem; margin-bottom: 1.75rem; }
+
+/* ── Shell ── */
+.app-shell { display: flex; height: 100vh; overflow: hidden; }
+
+/* ── Sidebar ── */
+.sidebar { width: var(--sidebar-w); background: var(--sidebar-bg); display: flex; flex-direction: column; flex-shrink: 0; overflow-y: auto; }
+.sidebar-brand { padding: 1.25rem 1rem; border-bottom: 1px solid rgba(255,255,255,.07); }
+.sidebar-brand-name { color: #fff; font-weight: 700; font-size: 1rem; line-height: 1.3; }
+.sidebar-brand-sub { color: var(--sidebar-text); font-size: .75rem; }
+.sidebar-nav { flex: 1; padding: .5rem 0; }
+.nav-item { display: flex; align-items: center; gap: .65rem; padding: .65rem 1rem; cursor: pointer; color: var(--sidebar-text); font-size: .875rem; border-radius: 0; transition: background .15s, color .15s; border-left: 3px solid transparent; }
+.nav-item:hover { background: var(--sidebar-hover); color: #fff; }
+.nav-item.active { background: rgba(59,130,246,.15); color: var(--sidebar-text-active); border-left-color: var(--accent); }
+.nav-item i { font-size: 1rem; width: 1.1rem; text-align: center; }
+.sidebar-footer { padding: .75rem 1rem; border-top: 1px solid rgba(255,255,255,.07); }
+
+/* ── Main ── */
+.main { flex: 1; display: flex; flex-direction: column; overflow: hidden; }
+.topbar { height: var(--topbar-h); background: #fff; border-bottom: 1px solid #e2e8f0; display: flex; align-items: center; gap: 1rem; padding: 0 1.5rem; flex-shrink: 0; }
+.topbar-title { font-weight: 600; font-size: 1.1rem; color: #1e293b; flex: 1; }
+.content { flex: 1; overflow-y: auto; padding: 1.5rem; }
+.page-overview { display: flex; align-items: flex-start; gap: .65rem; background: #eff6ff; border: 1px solid #bfdbfe; border-radius: 8px; color: #1e3a5f; margin-bottom: 1rem; padding: .75rem 1rem; }
+.page-overview i { color: var(--accent); font-size: 1rem; margin-top: .1rem; }
+.page-overview p { font-size: .875rem; line-height: 1.45; margin: 0; }
+
+/* ── Cards ── */
+.stat-card { background: #fff; border-radius: 10px; padding: 1.25rem 1.5rem; border: 1px solid #e2e8f0; }
+.stat-card .stat-val { font-size: 2rem; font-weight: 700; color: #1e293b; }
+.stat-card .stat-label { color: #64748b; font-size: .8rem; text-transform: uppercase; letter-spacing: .05em; }
+.stat-card .stat-icon { font-size: 1.5rem; color: var(--accent); }
+
+/* ── Tables ── */
+.table-wrap { background: #fff; border-radius: 10px; border: 1px solid #e2e8f0; overflow: hidden; }
+.table th { background: #f8fafc; font-size: .78rem; text-transform: uppercase; letter-spacing: .05em; color: #475569; font-weight: 600; border-bottom: 1px solid #e2e8f0; }
+.table td { vertical-align: middle; font-size: .875rem; }
+
+/* ── Badges ── */
+.badge-new { background: #dcfce7; color: #15803d; }
+.badge-exists { background: #f1f5f9; color: #475569; }
+.badge-invalid { background: #fee2e2; color: #b91c1c; }
+.badge-match { background: #dcfce7; color: #15803d; }
+.badge-missing { background: #fef3c7; color: #92400e; }
+.badge-different { background: #fee2e2; color: #b91c1c; }
+.badge-na { background: #f1f5f9; color: #94a3b8; }
+
+/* ── Wizard steps ── */
+.wizard-steps { display: flex; align-items: center; margin-bottom: 2rem; }
+.step-bubble { width: 32px; height: 32px; border-radius: 50%; display: flex; align-items: center; justify-content: center; font-size: .8rem; font-weight: 700; flex-shrink: 0; }
+.step-bubble.done { background: var(--success); color: #fff; }
+.step-bubble.active { background: var(--accent); color: #fff; }
+.step-bubble.pending { background: #e2e8f0; color: #94a3b8; }
+.step-line { flex: 1; height: 2px; background: #e2e8f0; margin: 0 .5rem; }
+.step-line.done { background: var(--success); }
+
+/* ── Misc ── */
+.page-card { background: #fff; border-radius: 10px; border: 1px solid #e2e8f0; padding: 1.5rem; margin-bottom: 1rem; }
+.change-new { color: #15803d; }
+.change-removed { color: #b91c1c; }
+.change-unchanged { color: #64748b; }
+.change-duplicate, .change-invalid { color: #b91c1c; font-weight: 600; }
+.log-info { color: #3b82f6; }
+.log-success { color: #22c55e; }
+.log-warning { color: #f59e0b; }
+.log-error { color: #ef4444; }
+.activity-entry { font-family: monospace; font-size: .8rem; padding: .25rem 0; border-bottom: 1px solid #f1f5f9; }
+.section-header { font-weight: 600; font-size: 1rem; color: #1e293b; margin-bottom: 1rem; }
+.network-row:hover { background: #f8fafc; cursor: pointer; }
+.compare-match { background: #dcfce7 !important; }
+.compare-missing { background: #fef3c7 !important; }
+.compare-different { background: #fee2e2 !important; }
+.compare-na { background: #f8fafc !important; color: #94a3b8; }
+.btn-sidebar-action { background: rgba(255,255,255,.08); border: 1px solid rgba(255,255,255,.12); color: #fff; font-size: .8rem; padding: .4rem .75rem; border-radius: 6px; cursor: pointer; transition: background .15s; width: 100%; text-align: left; display: flex; align-items: center; gap: .5rem; margin-bottom: .4rem; }
+.btn-sidebar-action:hover { background: rgba(255,255,255,.15); }

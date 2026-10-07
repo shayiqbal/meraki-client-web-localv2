@@ -1,0 +1,13 @@
+.git/
+.env
+.venv/
+.web_venv/
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.coverage
+htmlcov/
+logs/
+exports/
+tests/
+.DS_Store

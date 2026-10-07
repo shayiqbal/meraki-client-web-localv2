@@ -1,0 +1,1226 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8"/>
+  <meta name="viewport" content="width=device-width, initial-scale=1"/>
+  <title>Meraki Config Manager</title>
+  <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/css/bootstrap.min.css" rel="stylesheet" integrity="sha384-QWTKZyjpPEjISv5WaRU9OFeRpok6YctnYmDr5pNlyT2bRjXh0JMhjY6hW+ALEwIH" crossorigin="anonymous"/>
+  <link href="/static/style.css" rel="stylesheet"/>
+</head>
+<body x-data="app()" x-init="init()">
+
+<!-- ══════════════════════════════════════════════════════════ LOGIN ═══════ -->
+<div class="login-wrap" x-show="!authenticated" x-cloak>
+  <div class="login-card">
+    <div class="login-logo">Meraki Config Manager</div>
+    <div class="login-sub">Enter your Cisco Meraki API key to continue</div>
+
+    <form @submit.prevent="login()">
+      <div class="mb-3">
+        <label class="form-label fw-semibold">Meraki API Key</label>
+        <input x-model="apiKey" type="password" class="form-control" placeholder="Paste your API key…" autocomplete="off" :disabled="loginLoading"/>
+      </div>
+      <div x-show="loginError" class="alert alert-danger py-2 small" x-text="loginError"></div>
+      <button type="submit" class="btn btn-primary w-100" :disabled="loginLoading || !apiKey.trim()">
+        <span x-show="loginLoading" class="spinner-border spinner-border-sm me-2"></span>
+        <span x-text="loginLoading ? 'Connecting…' : 'Connect'"></span>
+      </button>
+    </form>
+    <hr/>
+    <p class="text-muted small mb-0">Your API key is validated against Meraki and held in memory only for this session.</p>
+  </div>
+</div>
+
+<!-- ═══════════════════════════════════════════════════════════ MAIN APP ══ -->
+<div class="app-shell" x-show="authenticated" x-cloak>
+
+  <!-- ── Sidebar ─────────────────────────────────────────────────────────── -->
+  <nav class="sidebar">
+    <div class="sidebar-brand">
+      <div class="sidebar-brand-name">Meraki Config</div>
+      <div class="sidebar-brand-sub">Network Manager</div>
+    </div>
+    <div class="sidebar-nav">
+      <div class="nav-item" :class="{active: page==='dashboard'}" @click="navigate('dashboard')">
+        <i class="bi bi-speedometer2"></i> Dashboard
+      </div>
+      <div class="nav-item" :class="{active: page==='networks'}" @click="navigate('networks')">
+        <i class="bi bi-diagram-3"></i> Networks
+      </div>
+      <div class="nav-item" :class="{active: page==='exclusions'}" @click="navigate('exclusions')">
+        <i class="bi bi-shield-check"></i> VPN Exclusions
+      </div>
+      <div class="nav-item" :class="{active: page==='copy'}" @click="startCopyWizard()">
+        <i class="bi bi-copy"></i> Copy Rules
+      </div>
+      <div class="nav-item" :class="{active: page==='grouppolicies'}" @click="startGpWizard()">
+        <i class="bi bi-people"></i> Group Policies
+      </div>
+      <div class="nav-item" :class="{active: page==='compare'}" @click="startCompare()">
+        <i class="bi bi-arrow-left-right"></i> Compare Networks
+      </div>
+      <div class="nav-item" :class="{active: page==='newnet'}" @click="startNewNet()">
+        <i class="bi bi-plus-circle"></i> New Network
+      </div>
+      <div class="nav-item" :class="{active: page==='deviceaddr'}" @click="startDeviceAddrWizard()">
+        <i class="bi bi-geo-alt"></i> Device Addresses
+      </div>
+      <div class="nav-item" :class="{active: page==='activity'}" @click="navigate('activity')">
+        <i class="bi bi-journal-text"></i> Activity Log
+        <span x-show="actLog.length" class="badge bg-secondary ms-auto" x-text="actLog.length"></span>
+      </div>
+    </div>
+    <div class="sidebar-footer">
+      <button class="btn-sidebar-action" @click="logout()">
+        <i class="bi bi-box-arrow-left"></i> New Session
+      </button>
+    </div>
+  </nav>
+
+  <!-- ── Main content ─────────────────────────────────────────────────────── -->
+  <div class="main">
+
+    <!-- Top bar -->
+    <div class="topbar">
+      <div class="topbar-title" x-text="pageTitles[page] || page"></div>
+      <select class="form-select form-select-sm w-auto" x-model="selectedOrgId" @change="onOrgChange()" style="max-width:260px">
+        <option value="" disabled x-show="!selectedOrgId">Select an organization…</option>
+        <template x-for="o in orgs" :key="o.id">
+          <option :value="o.id" x-text="o.name"></option>
+        </template>
+      </select>
+      <button class="btn btn-sm btn-outline-secondary" @click="loadNetworks()" :disabled="networksLoading || !selectedOrgId">
+        <span x-show="networksLoading" class="spinner-border spinner-border-sm"></span>
+        <i x-show="!networksLoading" class="bi bi-arrow-clockwise"></i>
+        Refresh
+      </button>
+    </div>
+
+    <!-- ── Content area ──────────────────────────────────────────────────── -->
+    <div class="content">
+
+      <!-- No org selected yet -->
+      <div x-show="!selectedOrgId" class="d-flex flex-column align-items-center justify-content-center" style="min-height:60vh">
+        <i class="bi bi-building" style="font-size:3.5rem;color:#cbd5e1"></i>
+        <h5 class="mt-3 text-muted fw-semibold">Select an Organization</h5>
+        <p class="text-muted small">Choose an organization from the dropdown above to get started.</p>
+      </div>
+
+      <!-- All pages (hidden until org is selected) -->
+      <div x-show="selectedOrgId">
+        <div class="page-overview">
+          <i class="bi bi-info-circle-fill"></i>
+          <p x-text="pageOverviews[page]"></p>
+        </div>
+
+      <!-- ════════════════════════ DASHBOARD ════════════════════════════════ -->
+      <div x-show="page==='dashboard'">
+        <div class="row g-3 mb-4">
+          <div class="col-md-4">
+            <div class="stat-card">
+              <div class="d-flex justify-content-between align-items-start">
+                <div>
+                  <div class="stat-label">Networks</div>
+                  <div class="stat-val" x-text="networks.length"></div>
+                </div>
+                <i class="bi bi-diagram-3 stat-icon"></i>
+              </div>
+            </div>
+          </div>
+          <div class="col-md-4">
+            <div class="stat-card">
+              <div class="d-flex justify-content-between align-items-start">
+                <div>
+                  <div class="stat-label">VPN Exclusions</div>
+                  <div class="stat-val">
+                    <span x-show="dashLoading" class="spinner-border spinner-border-sm"></span>
+                    <span x-show="!dashLoading" x-text="dashStats.exclusionCount"></span>
+                  </div>
+                </div>
+                <i class="bi bi-shield-check stat-icon"></i>
+              </div>
+            </div>
+          </div>
+          <div class="col-md-4">
+            <div class="stat-card">
+              <div class="d-flex justify-content-between align-items-start">
+                <div>
+                  <div class="stat-label">Organization</div>
+                  <div class="stat-val" style="font-size:1.1rem" x-text="selectedOrg()?.name || '—'"></div>
+                </div>
+                <i class="bi bi-building stat-icon"></i>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <div class="page-card">
+          <div class="section-header">Quick Actions</div>
+          <div class="d-flex gap-2 flex-wrap">
+            <button class="btn btn-primary" @click="navigate('networks')"><i class="bi bi-diagram-3 me-1"></i>View Networks</button>
+            <button class="btn btn-outline-primary" @click="startCopyWizard()"><i class="bi bi-copy me-1"></i>Copy Rules</button>
+            <button class="btn btn-outline-primary" @click="startGpWizard()"><i class="bi bi-people me-1"></i>Group Policies</button>
+            <button class="btn btn-outline-primary" @click="startCompare()"><i class="bi bi-arrow-left-right me-1"></i>Compare Networks</button>
+            <button class="btn btn-outline-primary" @click="startNewNet()"><i class="bi bi-plus-circle me-1"></i>New Network</button>
+            <button class="btn btn-outline-secondary" @click="loadDashboard()"><i class="bi bi-arrow-clockwise me-1"></i>Refresh Stats</button>
+          </div>
+        </div>
+
+        <div class="page-card" x-show="actLog.length">
+          <div class="section-header">Recent Activity</div>
+          <template x-for="(e,i) in actLog.slice(0,5)" :key="i">
+            <div class="activity-entry" :class="'log-'+e.level">
+              <span class="text-muted me-2" x-text="e.time"></span>
+              <span x-text="e.msg"></span>
+            </div>
+          </template>
+        </div>
+      </div>
+
+      <!-- ════════════════════════ NETWORKS ══════════════════════════════════ -->
+      <div x-show="page==='networks'">
+        <div class="d-flex align-items-center gap-2 mb-3">
+          <input class="form-control form-control-sm w-auto" type="text" x-model="networkSearch" placeholder="Search networks…"/>
+          <span class="text-muted small" x-text="`${filteredNetworks.length} of ${networks.length}`"></span>
+        </div>
+        <div class="table-wrap">
+          <table class="table table-hover mb-0">
+            <thead>
+              <tr>
+                <th>Network Name</th>
+                <th>Tags</th>
+                <th>Product Types</th>
+                <th></th>
+              </tr>
+            </thead>
+            <tbody>
+              <template x-if="networksLoading">
+                <tr><td colspan="4" class="text-center py-4"><span class="spinner-border spinner-border-sm me-2"></span>Loading…</td></tr>
+              </template>
+              <template x-if="!networksLoading && filteredNetworks.length === 0">
+                <tr><td colspan="4" class="text-center py-4 text-muted">No networks found.</td></tr>
+              </template>
+              <template x-for="n in filteredNetworks" :key="n.id">
+                <tr class="network-row">
+                  <td class="fw-semibold" x-text="n.name"></td>
+                  <td>
+                    <template x-for="t in (n.tags||[])" :key="t">
+                      <span class="badge bg-light text-secondary me-1" x-text="t"></span>
+                    </template>
+                  </td>
+                  <td><span class="text-muted small" x-text="(n.productTypes||[]).join(', ')"></span></td>
+                  <td>
+                    <button class="btn btn-sm btn-outline-primary" @click="loadExclusions(n)">
+                      <i class="bi bi-shield-check"></i> Manage Exclusions
+                    </button>
+                  </td>
+                </tr>
+              </template>
+            </tbody>
+          </table>
+        </div>
+      </div>
+
+      <!-- ════════════════════════ VPN EXCLUSIONS ════════════════════════════ -->
+      <div x-show="page==='exclusions'">
+        <template x-if="!exclNetwork">
+          <div class="page-card">
+            <div class="section-header">Select a Network</div>
+            <input class="form-control form-control-sm mb-3" type="text" x-model="exclNetworkSearch" placeholder="Search networks…"/>
+            <div class="table-wrap">
+              <table class="table table-hover mb-0">
+                <thead><tr><th>Name</th><th>Tags</th><th></th></tr></thead>
+                <tbody>
+                  <template x-if="networksLoading">
+                    <tr><td colspan="3" class="text-center py-3"><span class="spinner-border spinner-border-sm me-1"></span>Loading…</td></tr>
+                  </template>
+                  <template x-for="n in filteredExclNetworks" :key="n.id">
+                    <tr class="network-row">
+                      <td class="fw-semibold" x-text="n.name"></td>
+                      <td><template x-for="t in (n.tags||[])" :key="t"><span class="badge bg-light text-secondary me-1" x-text="t"></span></template></td>
+                      <td><button class="btn btn-sm btn-outline-primary" @click="loadExclusions(n)"><i class="bi bi-shield-check"></i> Manage</button></td>
+                    </tr>
+                  </template>
+                </tbody>
+              </table>
+            </div>
+          </div>
+        </template>
+
+        <template x-if="exclNetwork">
+          <div>
+            <!-- Header -->
+            <div class="page-card mb-3">
+              <div class="d-flex align-items-center justify-content-between flex-wrap gap-2">
+                <div>
+                  <div class="fw-bold" x-text="exclNetwork.name"></div>
+                  <div class="text-muted small" x-text="exclNetwork.id"></div>
+                </div>
+                <div class="d-flex gap-2 align-items-center flex-wrap">
+                  <label class="btn btn-outline-secondary btn-sm" :class="{disabled: exclImportLoading}">
+                    <span x-show="exclImportLoading" class="spinner-border spinner-border-sm me-1"></span>
+                    <i x-show="!exclImportLoading" class="bi bi-upload me-1"></i>
+                    Import CSV/XLSX/JSON
+                    <input type="file" class="d-none" accept=".csv,.xlsx,.json,.txt" @change="importFile($event)"/>
+                  </label>
+                  <select class="form-select form-select-sm w-auto" x-model="exclMode">
+                    <option value="merge">Merge mode</option>
+                    <option value="replace">Replace mode</option>
+                  </select>
+                  <button class="btn btn-sm btn-primary" @click="runDryRun()" :disabled="!exclProposedRules.length || exclLoading">
+                    <span x-show="exclLoading" class="spinner-border spinner-border-sm me-1"></span>
+                    Run Dry Run
+                  </button>
+                </div>
+              </div>
+            </div>
+
+            <div class="row g-3">
+              <!-- Current rules -->
+              <div class="col-md-6">
+                <div class="page-card h-100">
+                  <div class="section-header">Current Rules <span class="badge bg-secondary ms-1" x-text="exclCurrentRules.length"></span></div>
+                  <template x-if="exclLoading && !exclCurrentRules.length">
+                    <div class="text-center py-3"><span class="spinner-border spinner-border-sm"></span></div>
+                  </template>
+                  <template x-if="!exclCurrentRules.length && !exclLoading">
+                    <div class="text-muted small">No exclusion rules configured.</div>
+                  </template>
+                  <div style="max-height:320px;overflow-y:auto">
+                    <template x-for="(r,i) in exclCurrentRules" :key="i">
+                      <div class="border-bottom py-1 small">
+                        <span class="badge bg-light text-secondary me-1" x-text="r.category"></span>
+                        <span x-text="ruleLabel(r)"></span>
+                      </div>
+                    </template>
+                  </div>
+                </div>
+              </div>
+
+              <!-- Proposed rules -->
+              <div class="col-md-6">
+                <div class="page-card h-100">
+                  <div class="section-header">Proposed Rules <span class="badge bg-secondary ms-1" x-text="exclProposedRules.length"></span></div>
+                  <template x-if="!exclProposedRules.length">
+                    <div class="text-muted small">Import a file to load proposed rules.</div>
+                  </template>
+                  <div style="max-height:320px;overflow-y:auto">
+                    <template x-for="(r,i) in exclProposedRules" :key="i">
+                      <div class="border-bottom py-1 small">
+                        <span class="badge bg-light text-secondary me-1" x-text="r.category"></span>
+                        <span x-text="ruleLabel(r)"></span>
+                      </div>
+                    </template>
+                  </div>
+                </div>
+              </div>
+            </div>
+
+            <!-- Dry-run result -->
+            <template x-if="exclDryRunResult">
+              <div class="page-card mt-3">
+                <div class="section-header">
+                  Dry Run Result — <span x-text="exclDryRunResult.change_count"></span> change(s)
+                  <span x-show="exclDryRunResult.has_blockers" class="badge bg-danger ms-2">Blocked</span>
+                  <span x-show="!exclDryRunResult.has_blockers" class="badge bg-success ms-2">Ready to Deploy</span>
+                </div>
+                <div style="max-height:250px;overflow-y:auto;font-family:monospace;font-size:.82rem">
+                  <template x-for="(c,i) in exclDryRunResult.changes" :key="i">
+                    <div class="py-1 border-bottom" :class="changeClass(c.kind)">
+                      <span class="me-2 fw-bold" x-text="changeIcon(c.kind)"></span>
+                      <span class="badge bg-light text-secondary me-1" x-text="c.kind.toUpperCase()"></span>
+                      <span x-text="ruleLabel(c.rule)"></span>
+                      <span x-show="c.detail" class="text-muted ms-2" x-text="'('+c.detail+')'"></span>
+                    </div>
+                  </template>
+                </div>
+                <div class="mt-3 d-flex gap-2">
+                  <button class="btn btn-success" @click="deployRules()"
+                    :disabled="exclDryRunResult.has_blockers || exclDeployLoading">
+                    <span x-show="exclDeployLoading" class="spinner-border spinner-border-sm me-1"></span>
+                    Deploy to <span x-text="exclNetwork.name"></span>
+                  </button>
+                  <button class="btn btn-outline-secondary" @click="exclDryRunResult=null">Clear</button>
+                </div>
+              </div>
+            </template>
+
+            <!-- Deploy result -->
+            <template x-if="exclDeployResult">
+              <div class="alert mt-3" :class="exclDeployResult.ok ? 'alert-success' : 'alert-danger'">
+                <span x-show="exclDeployResult.ok"><i class="bi bi-check-circle me-1"></i>Deployed successfully!</span>
+                <span x-show="!exclDeployResult.ok"><i class="bi bi-x-circle me-1"></i><span x-text="exclDeployResult.error"></span></span>
+              </div>
+            </template>
+          </div>
+        </template>
+      </div>
+
+      <!-- ════════════════════════ COPY RULES WIZARD ════════════════════════ -->
+      <div x-show="page==='copy'">
+        <!-- Step indicator -->
+        <div class="wizard-steps mb-4">
+          <template x-for="s in [1,2,3,4,5]" :key="s">
+            <template x-if="true">
+              <span class="d-flex align-items-center">
+                <span class="step-bubble"
+                  :class="copyStep>s?'done':copyStep===s?'active':'pending'"
+                  x-text="copyStep>s?'✓':s"></span>
+                <span x-show="s<5" class="step-line" :class="copyStep>s?'done':''"></span>
+              </span>
+            </template>
+          </template>
+        </div>
+
+        <!-- Step 1: Choose source -->
+        <div x-show="copyStep===1">
+          <div class="page-card">
+            <div class="section-header">Step 1 — Select Source Network</div>
+            <input class="form-control form-control-sm mb-3" type="text" x-model="copySourceSearch" placeholder="Search networks…"/>
+            <div class="table-wrap">
+              <table class="table table-hover mb-0">
+                <thead><tr><th>Name</th><th>Tags</th><th></th></tr></thead>
+                <tbody>
+                  <template x-for="n in filteredCopySourceNetworks" :key="n.id">
+                    <tr>
+                      <td x-text="n.name"></td>
+                      <td><template x-for="t in (n.tags||[])" :key="t"><span class="badge bg-light text-secondary me-1" x-text="t"></span></template></td>
+                      <td><button class="btn btn-sm btn-primary" @click="copySelectSource(n)" :disabled="copyLoading">Select</button></td>
+                    </tr>
+                  </template>
+                </tbody>
+              </table>
+            </div>
+          </div>
+        </div>
+
+        <!-- Step 2: Select rules -->
+        <div x-show="copyStep===2">
+          <div class="page-card">
+            <div class="section-header">Step 2 — Select Rules from <em x-text="copySourceNetwork?.name"></em></div>
+            <div class="mb-2">
+              <button class="btn btn-sm btn-outline-secondary me-2" @click="copySelectedRuleIdxs=copySourceRules.map((_,i)=>i)">Select All</button>
+              <button class="btn btn-sm btn-outline-secondary" @click="copySelectedRuleIdxs=[]">Deselect All</button>
+            </div>
+            <div style="max-height:350px;overflow-y:auto">
+              <template x-for="(r,i) in copySourceRules" :key="i">
+                <div class="d-flex align-items-center gap-2 border-bottom py-2">
+                  <input type="checkbox" class="form-check-input" :checked="copySelectedRuleIdxs.includes(i)" @change="toggleCopyRule(i)"/>
+                  <span class="badge bg-light text-secondary" x-text="r.category"></span>
+                  <span class="small" x-text="ruleLabel(r)"></span>
+                </div>
+              </template>
+            </div>
+            <div class="mt-3 d-flex gap-2">
+              <button class="btn btn-primary" @click="copyStep=3" :disabled="!copySelectedRuleIdxs.length">
+                Next: Choose Destinations <span class="badge bg-white text-primary ms-1" x-text="copySelectedRuleIdxs.length"></span>
+              </button>
+              <button class="btn btn-outline-secondary" @click="copyStep=1">Back</button>
+            </div>
+          </div>
+        </div>
+
+        <!-- Step 3: Destination networks -->
+        <div x-show="copyStep===3">
+          <div class="page-card">
+            <div class="section-header">Step 3 — Select Destination Networks</div>
+            <div class="alert alert-light border small">
+              <div class="fw-semibold mb-1">Existing policy handling</div>
+              <label class="me-3"><input type="radio" value="skip" x-model="gpConflictMode"/> Skip existing policies</label>
+              <label><input type="radio" value="overwrite" x-model="gpConflictMode"/> Overwrite all writable settings and rules</label>
+            </div>
+            <div class="d-flex align-items-center gap-2 mb-2">
+              <input class="form-control form-control-sm" type="text" x-model="copyDestSearch" placeholder="Search networks…" style="max-width:280px"/>
+              <span class="text-muted small" x-text="`${copyDestNetworkIds.length} selected`"></span>
+            </div>
+            <div style="max-height:350px;overflow-y:auto">
+              <template x-for="n in filteredCopyDestNetworks" :key="n.id">
+                <div class="d-flex align-items-center gap-2 border-bottom py-2">
+                  <input type="checkbox" class="form-check-input" :checked="copyDestNetworkIds.includes(n.id)" @change="toggleCopyDest(n.id)"/>
+                  <span class="small fw-semibold" x-text="n.name"></span>
+                  <template x-for="t in (n.tags||[])" :key="t"><span class="badge bg-light text-secondary" x-text="t"></span></template>
+                </div>
+              </template>
+            </div>
+            <div class="mt-3 d-flex gap-2">
+              <button class="btn btn-primary" @click="runCopyPreview()" :disabled="!copyDestNetworkIds.length || copyLoading">
+                <span x-show="copyLoading" class="spinner-border spinner-border-sm me-1"></span>
+                Preview <span class="badge bg-white text-primary ms-1" x-text="copyDestNetworkIds.length"></span>
+              </button>
+              <button class="btn btn-outline-secondary" @click="copyStep=2">Back</button>
+            </div>
+          </div>
+        </div>
+
+        <!-- Step 4: Dry-run review -->
+        <div x-show="copyStep===4">
+          <div class="page-card">
+            <div class="section-header">Step 4 — Preview</div>
+            <template x-if="copyPreview">
+              <div>
+                <template x-for="p in copyPreview" :key="p.network_id">
+                  <div class="border rounded p-3 mb-2">
+                    <div class="fw-semibold mb-1" x-text="p.network_name"></div>
+                    <span class="badge badge-new me-1" x-text="`+${p.new_count} new`"></span>
+                    <span class="badge badge-exists me-1" x-text="`${p.exists_count} exists`"></span>
+                    <span x-show="p.invalid_count" class="badge badge-invalid" x-text="`${p.invalid_count} invalid`"></span>
+                  </div>
+                </template>
+              </div>
+            </template>
+            <div class="mt-3 d-flex gap-2">
+              <button class="btn btn-success" @click="runCopyExecute()" :disabled="copyLoading">
+                <span x-show="copyLoading" class="spinner-border spinner-border-sm me-1"></span>
+                Execute Copy
+              </button>
+              <button class="btn btn-outline-secondary" @click="copyStep=3">Back</button>
+            </div>
+          </div>
+        </div>
+
+        <!-- Step 5: Results -->
+        <div x-show="copyStep===5">
+          <div class="page-card">
+            <div class="section-header">Step 5 — Results</div>
+            <template x-if="copyResults">
+              <div class="table-wrap">
+                <table class="table mb-0">
+                  <thead><tr><th>Network</th><th>Status</th><th>Added</th><th>Skipped</th><th>Error</th></tr></thead>
+                  <tbody>
+                    <template x-for="r in copyResults" :key="r.network_id">
+                      <tr>
+                        <td x-text="r.network_name"></td>
+                        <td><span class="badge" :class="r.success?'bg-success':'bg-danger'" x-text="r.success?'Success':'Failed'"></span></td>
+                        <td x-text="r.rules_added"></td>
+                        <td x-text="r.rules_skipped"></td>
+                        <td class="text-danger small" x-text="r.error"></td>
+                      </tr>
+                    </template>
+                  </tbody>
+                </table>
+              </div>
+            </template>
+            <div class="mt-3">
+              <button class="btn btn-outline-primary" @click="startCopyWizard()">Copy More Rules</button>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <!-- ════════════════════════ GROUP POLICIES WIZARD ══════════════════════ -->
+      <div x-show="page==='grouppolicies'">
+        <!-- Step indicator -->
+        <div class="wizard-steps mb-4">
+          <template x-for="s in [1,2,3,4,5]" :key="s">
+            <template x-if="true">
+              <span class="d-flex align-items-center">
+                <span class="step-bubble"
+                  :class="gpStep>s?'done':gpStep===s?'active':'pending'"
+                  x-text="gpStep>s?'✓':s"></span>
+                <span x-show="s<5" class="step-line" :class="gpStep>s?'done':''"></span>
+              </span>
+            </template>
+          </template>
+        </div>
+
+        <!-- Step 1: Choose source -->
+        <div x-show="gpStep===1">
+          <div class="page-card">
+            <div class="section-header">Step 1 — Select Source Network</div>
+            <input class="form-control form-control-sm mb-3" type="text" x-model="gpSourceSearch" placeholder="Search networks…"/>
+            <div class="table-wrap">
+              <table class="table table-hover mb-0">
+                <thead><tr><th>Name</th><th>Tags</th><th></th></tr></thead>
+                <tbody>
+                  <template x-for="n in filteredGpSourceNetworks" :key="n.id">
+                    <tr>
+                      <td x-text="n.name"></td>
+                      <td><template x-for="t in (n.tags||[])" :key="t"><span class="badge bg-light text-secondary me-1" x-text="t"></span></template></td>
+                      <td><button class="btn btn-sm btn-primary" @click="gpSelectSource(n)" :disabled="gpLoading">
+                        <span x-show="gpLoading" class="spinner-border spinner-border-sm"></span>
+                        Select
+                      </button></td>
+                    </tr>
+                  </template>
+                </tbody>
+              </table>
+            </div>
+          </div>
+        </div>
+
+        <!-- Step 2: Select policies -->
+        <div x-show="gpStep===2">
+          <div class="page-card">
+            <div class="section-header">Step 2 — Select Policies from <em x-text="gpSourceNetwork?.name"></em></div>
+            <template x-if="gpSourcePolicies.length===0">
+              <div class="text-muted small mb-3">No group policies found on this network.</div>
+            </template>
+            <template x-if="gpSourcePolicies.length>0">
+              <div>
+                <div class="mb-2">
+                  <button class="btn btn-sm btn-outline-secondary me-2"
+                    @click="gpSelectedPolicyIdxs=gpSourcePolicies.map((_,i)=>i)">Select All</button>
+                  <button class="btn btn-sm btn-outline-secondary"
+                    @click="gpSelectedPolicyIdxs=[]">Deselect All</button>
+                </div>
+                <div style="max-height:350px;overflow-y:auto">
+                  <template x-for="(p,i) in gpSourcePolicies" :key="i">
+                    <div class="d-flex align-items-center gap-2 border-bottom py-2">
+                      <input type="checkbox" class="form-check-input"
+                             :checked="gpSelectedPolicyIdxs.includes(i)"
+                             @change="toggleGpPolicy(i)"/>
+                      <span class="small fw-semibold" x-text="p.name"></span>
+                      <span class="text-muted small" x-text="gpPolicySummary(p)"></span>
+                    </div>
+                  </template>
+                </div>
+              </div>
+            </template>
+            <div class="mt-3 d-flex gap-2">
+              <button class="btn btn-primary" @click="gpStep=3"
+                      :disabled="!gpSelectedPolicyIdxs.length">
+                Next: Choose Destinations
+                <span class="badge bg-white text-primary ms-1" x-text="gpSelectedPolicyIdxs.length"></span>
+              </button>
+              <button class="btn btn-outline-secondary" @click="gpStep=1">Back</button>
+            </div>
+          </div>
+        </div>
+
+        <!-- Step 3: Destination networks -->
+        <div x-show="gpStep===3">
+          <div class="page-card">
+            <div class="section-header">Step 3 — Select Destination Networks</div>
+            <div class="d-flex align-items-center gap-2 mb-2">
+              <input class="form-control form-control-sm" type="text"
+                     x-model="gpDestSearch" placeholder="Search networks…" style="max-width:280px"/>
+              <span class="text-muted small" x-text="`${gpDestNetworkIds.length} selected`"></span>
+            </div>
+            <div style="max-height:350px;overflow-y:auto">
+              <template x-for="n in filteredGpDestNetworks" :key="n.id">
+                <div class="d-flex align-items-center gap-2 border-bottom py-2">
+                  <input type="checkbox" class="form-check-input"
+                         :checked="gpDestNetworkIds.includes(n.id)"
+                         @change="toggleGpDest(n.id)"/>
+                  <span class="small fw-semibold" x-text="n.name"></span>
+                  <template x-for="t in (n.tags||[])" :key="t">
+                    <span class="badge bg-light text-secondary" x-text="t"></span>
+                  </template>
+                </div>
+              </template>
+            </div>
+            <div class="mt-3 d-flex gap-2">
+              <button class="btn btn-primary" @click="runGpPreview()"
+                      :disabled="!gpDestNetworkIds.length || gpLoading">
+                <span x-show="gpLoading" class="spinner-border spinner-border-sm me-1"></span>
+                Preview
+                <span class="badge bg-white text-primary ms-1" x-text="gpDestNetworkIds.length"></span>
+              </button>
+              <button class="btn btn-outline-secondary" @click="gpStep=2">Back</button>
+            </div>
+          </div>
+        </div>
+
+        <!-- Step 4: Preview -->
+        <div x-show="gpStep===4">
+          <div class="page-card">
+            <div class="section-header">Step 4 — Dry-Run Review</div>
+            <template x-if="gpPreview">
+              <div class="table-wrap">
+                <table class="table mb-0 small">
+                  <thead><tr><th>Destination</th><th>Policy</th><th>Planned Action</th><th>Changed Settings</th></tr></thead>
+                  <tbody><template x-for="item in gpPreview.items" :key="`${item.network_id}-${item.policy_name}`"><tr>
+                    <td x-text="item.network_name"></td><td x-text="item.policy_name"></td>
+                    <td><span class="badge" :class="item.action==='overwrite'?'bg-warning text-dark':item.action==='create'?'bg-success':item.action==='conflict'?'bg-danger':'bg-secondary'" x-text="item.action"></span></td>
+                    <td x-text="item.changed_fields.join(', ') || 'No change'"></td>
+                  </tr></template></tbody>
+                </table>
+              </div>
+            </template>
+            <div x-show="gpPreview?.items?.some(item => item.action==='overwrite')" class="alert alert-warning small mt-3">
+              <label><input type="checkbox" x-model="gpOverwriteAcknowledged"/> I understand overwrite replaces all writable destination policy settings and rules. Rollback is available only during this active session.</label>
+            </div>
+            <div class="mt-3 d-flex gap-2">
+              <button class="btn btn-success" @click="runGpExecute()" :disabled="gpLoading || (gpPreview?.items?.some(item => item.action==='overwrite') && !gpOverwriteAcknowledged)">
+                <span x-show="gpLoading" class="spinner-border spinner-border-sm me-1"></span>
+                Execute Copy
+              </button>
+              <button class="btn btn-outline-secondary" @click="gpStep=3">Back</button>
+            </div>
+          </div>
+        </div>
+
+        <!-- Step 5: Results -->
+        <div x-show="gpStep===5">
+          <div class="page-card">
+            <div class="section-header">Step 5 — Results</div>
+            <template x-if="gpResults">
+              <div class="table-wrap">
+                <table class="table mb-0">
+                  <thead><tr><th>Network</th><th>Policy</th><th>Action</th><th>Status</th><th>Error</th></tr></thead>
+                  <tbody>
+                    <template x-for="r in gpResults" :key="r.network_id">
+                      <tr>
+                        <td x-text="r.network_name"></td>
+                        <td x-text="r.policy_name"></td>
+                        <td x-text="r.action"></td>
+                        <td><span class="badge" :class="r.success?'bg-success':'bg-danger'"
+                                  x-text="r.success?'Success':'Failed'"></span></td>
+                        <td class="text-danger small" x-text="r.error"></td>
+                      </tr>
+                    </template>
+                  </tbody>
+                </table>
+              </div>
+            </template>
+            <div class="alert alert-warning small mt-3" x-show="gpOperationId">Rollback is only available while this V2 session remains active. Verify changes before logging out or restarting.</div>
+            <template x-if="gpRollbackResults"><div class="alert alert-info small mt-3" x-text="`Rollback completed: ${gpRollbackResults.filter(r => r.success).length} restored, ${gpRollbackResults.filter(r => !r.success).length} blocked or failed.`"></div></template>
+            <div class="mt-3 d-flex gap-2">
+              <button class="btn btn-outline-warning" @click="runGpRollback()" :disabled="gpLoading || !gpOperationId">Rollback This Session</button>
+              <button class="btn btn-outline-primary" @click="startGpWizard()">Copy More Policies</button>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <!-- ════════════════════════ COMPARE NETWORKS ══════════════════════════ -->
+      <div x-show="page==='compare'">
+        <div class="row g-3 mb-3">
+          <!-- Source -->
+          <div class="col-md-5">
+            <div class="page-card">
+              <div class="section-header">Source Network</div>
+              <input class="form-control form-control-sm mb-2" type="text" x-model="cmpSourceSearch" placeholder="Search…"/>
+              <div style="max-height:300px;overflow-y:auto">
+                <template x-for="n in filteredCmpSourceNetworks" :key="n.id">
+                  <div class="d-flex align-items-center gap-2 border-bottom py-2 network-row px-1"
+                    :class="{'bg-primary bg-opacity-10': cmpSource?.id===n.id}"
+                    @click="cmpSource=n; cmpTargetIds=cmpTargetIds.filter(id=>id!==n.id)">
+                    <input type="radio" class="form-check-input" :checked="cmpSource?.id===n.id" readonly/>
+                    <span class="small fw-semibold" x-text="n.name"></span>
+                  </div>
+                </template>
+              </div>
+            </div>
+          </div>
+          <!-- Targets -->
+          <div class="col-md-5">
+            <div class="page-card">
+              <div class="d-flex justify-content-between align-items-center mb-2">
+                <div class="section-header mb-0">Target Networks</div>
+                <span class="badge bg-primary" x-text="`${cmpTargetIds.length} selected`"></span>
+              </div>
+              <input class="form-control form-control-sm mb-2" type="text" x-model="cmpTargetSearch" placeholder="Search…"/>
+              <div style="max-height:300px;overflow-y:auto">
+                <template x-for="n in filteredCmpTargetNetworks" :key="n.id">
+                  <div class="d-flex align-items-center gap-2 border-bottom py-2 network-row px-1" @click="toggleCmpTarget(n.id)">
+                    <input type="checkbox" class="form-check-input" :checked="cmpTargetIds.includes(n.id)" readonly/>
+                    <span class="small fw-semibold" x-text="n.name"></span>
+                  </div>
+                </template>
+              </div>
+            </div>
+          </div>
+          <div class="col-md-2 d-flex align-items-end">
+            <button class="btn btn-primary w-100" @click="runCompare()"
+              :disabled="!cmpSource||!cmpTargetIds.length||cmpLoading">
+              <span x-show="cmpLoading" class="spinner-border spinner-border-sm me-1"></span>
+              Compare
+            </button>
+          </div>
+        </div>
+
+        <!-- Results -->
+        <template x-if="cmpReport">
+          <div class="page-card">
+            <ul class="nav nav-tabs mb-3">
+              <li class="nav-item"><a class="nav-link" :class="{active: cmpTab==='vpn'}" @click.prevent="cmpTab='vpn'" href="#">VPN Rules <span class="badge bg-secondary ms-1" x-text="cmpReport.vpn_rules.length"></span></a></li>
+              <li class="nav-item"><a class="nav-link" :class="{active: cmpTab==='ssids'}" @click.prevent="cmpTab='ssids'" href="#">SSIDs</a></li>
+              <li class="nav-item"><a class="nav-link" :class="{active: cmpTab==='settings'}" @click.prevent="cmpTab='settings'" href="#">Settings</a></li>
+            </ul>
+
+            <div style="overflow-x:auto">
+              <table class="table table-bordered table-sm mb-0" style="min-width:600px">
+                <thead>
+                  <tr>
+                    <th style="min-width:260px">Rule / Setting</th>
+                    <!-- Source network column -->
+                    <th class="text-center" style="background:#e0f2fe;min-width:130px">
+                      <span x-text="cmpReport.source_network.name"></span>
+                      <span class="badge bg-primary ms-1" style="font-size:.65rem">SOURCE</span>
+                    </th>
+                    <template x-for="t in cmpReport.target_networks" :key="t.id">
+                      <th class="text-center" x-text="t.name"></th>
+                    </template>
+                  </tr>
+                </thead>
+                <tbody>
+                  <template x-for="row in cmpReport[cmpTab==='vpn'?'vpn_rules':cmpTab==='ssids'?'ssids':'settings']" :key="row.label">
+                    <!-- Extra rows (on target but not in source) get a distinct style -->
+                    <tr :class="row.label.startsWith('[EXTRA]') ? 'table-warning' : ''">
+                      <td class="small" style="max-width:260px;word-break:break-word">
+                        <span x-show="row.label.startsWith('[EXTRA]')" class="badge bg-warning text-dark me-1" style="font-size:.65rem">EXTRA</span>
+                        <span x-text="row.source_display.replace(' ← extra (not in source)','')"></span>
+                      </td>
+                      <!-- Source column: ✓ if it's a source rule, — if it's extra on a target -->
+                      <td class="text-center small" :class="row.label.startsWith('[EXTRA]') ? 'compare-na' : 'compare-match'">
+                        <span class="fw-bold" x-text="row.label.startsWith('[EXTRA]') ? '—' : '✓'"></span>
+                      </td>
+                      <!-- Target columns -->
+                      <template x-for="t in cmpReport.target_networks" :key="t.id">
+                        <td :class="cellClass(row.cells[t.id])" class="text-center small" :title="row.cells[t.id]?.detail">
+                          <span class="fw-bold" x-text="cellIcon(row.cells[t.id])"></span>
+                          <span x-show="cellDetail(row.cells[t.id])" class="d-block" style="font-size:.7rem" x-text="cellDetail(row.cells[t.id])"></span>
+                        </td>
+                      </template>
+                    </tr>
+                  </template>
+                </tbody>
+              </table>
+            </div>
+          </div>
+        </template>
+      </div>
+
+      <!-- ════════════════════════ NEW NETWORK WIZARD ════════════════════════ -->
+      <div x-show="page==='newnet'">
+        <!-- Step indicator -->
+        <div class="wizard-steps mb-4">
+          <template x-for="s in [1,2,3,4,5,6]" :key="s">
+            <span class="d-flex align-items-center">
+              <span class="step-bubble" :class="nnStep>s?'done':nnStep===s?'active':'pending'" x-text="nnStep>s?'✓':s"></span>
+              <span x-show="s<6" class="step-line" :class="nnStep>s?'done':''"></span>
+            </span>
+          </template>
+        </div>
+
+        <!-- Step 1: Choose template -->
+        <div x-show="nnStep===1">
+          <div class="page-card">
+            <div class="section-header">Step 1 — Select Template Network</div>
+            <input class="form-control form-control-sm mb-3" type="text" x-model="nnTemplateSearch" placeholder="Search networks…"/>
+            <div class="table-wrap">
+              <table class="table table-hover mb-0">
+                <thead><tr><th>Name</th><th>Tags</th><th></th></tr></thead>
+                <tbody>
+                  <template x-for="n in filteredNnTemplateNetworks" :key="n.id">
+                    <tr>
+                      <td x-text="n.name"></td>
+                      <td><template x-for="t in (n.tags||[])" :key="t"><span class="badge bg-light text-secondary me-1" x-text="t"></span></template></td>
+                      <td><button class="btn btn-sm btn-primary" @click="nnSelectTemplate(n)" :disabled="nnLoading">
+                        <span x-show="nnLoading" class="spinner-border spinner-border-sm"></span>
+                        Use as Template
+                      </button></td>
+                    </tr>
+                  </template>
+                </tbody>
+              </table>
+            </div>
+          </div>
+        </div>
+
+        <!-- Step 2: Name & timezone -->
+        <div x-show="nnStep===2">
+          <div class="page-card">
+            <div class="section-header">Step 2 — Network Details</div>
+            <div class="mb-3">
+              <label class="form-label fw-semibold">Network Name *</label>
+              <input x-model="nnName" type="text" class="form-control" placeholder="e.g. Chicago-Office-MX"/>
+            </div>
+            <div class="mb-3">
+              <label class="form-label fw-semibold">Timezone</label>
+              <input x-model="nnTimezone" type="text" class="form-control" placeholder="America/Chicago"/>
+            </div>
+            <div class="mb-3">
+              <label class="form-label fw-semibold">Notes</label>
+              <textarea x-model="nnNotes" class="form-control" rows="2"></textarea>
+            </div>
+            <div class="d-flex gap-2">
+              <button class="btn btn-primary" @click="nnStep=3" :disabled="!nnName.trim()">Next</button>
+              <button class="btn btn-outline-secondary" @click="nnStep=1">Back</button>
+            </div>
+          </div>
+        </div>
+
+        <!-- Step 3: What to copy -->
+        <div x-show="nnStep===3">
+          <div class="page-card">
+            <div class="section-header">Step 3 — Configuration to Copy from <em x-text="nnTemplate?.name"></em></div>
+            <template x-if="nnCloneConfig">
+              <div>
+                <div class="form-check mb-2"><input type="checkbox" class="form-check-input" x-model="nnCopyTags" id="ct"/><label class="form-check-label" for="ct">Copy Tags <span class="text-muted small" x-text="`(${nnCloneConfig.tags?.length||0})`"></span></label></div>
+                <div class="form-check mb-2"><input type="checkbox" class="form-check-input" x-model="nnCopyVpn" id="cv"/><label class="form-check-label" for="cv">Copy VPN Exclusions <span class="text-muted small" x-text="`(${nnCloneConfig.vpn_exclusion_count||0} rules)`"></span></label></div>
+                <div class="form-check mb-2"><input type="checkbox" class="form-check-input" x-model="nnCopyRoutes" id="cr"/><label class="form-check-label" for="cr">Copy Static Routes <span class="text-muted small" x-text="`(${nnCloneConfig.static_route_count||0})`"></span></label></div>
+                <div class="form-check mb-2"><input type="checkbox" class="form-check-input" x-model="nnCopyL3" id="cl3"/><label class="form-check-label" for="cl3">Copy L3 Firewall Rules <span class="text-muted small" x-text="`(${nnCloneConfig.l3_rule_count||0})`"></span></label></div>
+                <div class="form-check mb-2"><input type="checkbox" class="form-check-input" x-model="nnCopyL7" id="cl7"/><label class="form-check-label" for="cl7">Copy L7 Firewall Rules <span class="text-muted small" x-text="`(${nnCloneConfig.l7_rule_count||0})`"></span></label></div>
+                <div class="form-check mb-2"><input type="checkbox" class="form-check-input" x-model="nnCopySSIDs" id="cs"/><label class="form-check-label" for="cs">Copy SSID Settings <span class="text-muted small" x-text="`(${nnCloneConfig.ssid_count||0} enabled)`"></span></label></div>
+                <div class="form-check mb-2"><input type="checkbox" class="form-check-input" x-model="nnCopySettings" id="cns"/><label class="form-check-label" for="cns">Copy Appliance Settings</label></div>
+                <div class="form-check mb-2"><input type="checkbox" class="form-check-input" x-model="nnCopyGroupPolicies" id="cgp"/><label class="form-check-label" for="cgp">Copy Group Policies <span class="text-muted small" x-text="`(${nnCloneConfig.group_policy_count||0})`"></span></label></div>
+              </div>
+            </template>
+            <div class="mt-3 d-flex gap-2">
+              <button class="btn btn-primary" @click="nnStep=4">Next</button>
+              <button class="btn btn-outline-secondary" @click="nnStep=2">Back</button>
+            </div>
+          </div>
+        </div>
+
+        <!-- Step 4: PSKs (if copying SSIDs) -->
+        <div x-show="nnStep===4">
+          <div class="page-card">
+            <div class="section-header">Step 4 — PSK Passwords</div>
+            <template x-if="nnPskSsids.length===0">
+              <p class="text-muted">No PSK SSIDs to configure (or Copy SSIDs is disabled).</p>
+            </template>
+            <template x-for="s in nnPskSsids" :key="s.number">
+              <div class="mb-3">
+                <label class="form-label fw-semibold" x-text="`[Slot ${s.number}] ${s.name} — PSK`"></label>
+                <input type="password" class="form-control" :placeholder="`Password for ${s.name} (leave blank to skip)`"
+                  @input="nnSsidPsks[s.number]=$event.target.value"/>
+              </div>
+            </template>
+            <div class="d-flex gap-2">
+              <button class="btn btn-primary" @click="nnStep=5">Next: Review</button>
+              <button class="btn btn-outline-secondary" @click="nnStep=3">Back</button>
+            </div>
+          </div>
+        </div>
+
+        <!-- Step 5: Review & Create -->
+        <div x-show="nnStep===5">
+          <div class="page-card">
+            <div class="section-header">Step 5 — Review & Create</div>
+            <table class="table table-sm">
+              <tbody>
+                <tr><th>Name</th><td x-text="nnName"></td></tr>
+                <tr><th>Template</th><td x-text="nnTemplate?.name"></td></tr>
+                <tr><th>Timezone</th><td x-text="nnTimezone"></td></tr>
+                <tr><th>Notes</th><td x-text="nnNotes||'—'"></td></tr>
+                <tr><th>VPN Exclusions</th><td x-text="nnCopyVpn?'Yes':'No'"></td></tr>
+                <tr><th>Static Routes</th><td x-text="nnCopyRoutes?'Yes':'No'"></td></tr>
+                <tr><th>L3 Firewall</th><td x-text="nnCopyL3?'Yes':'No'"></td></tr>
+                <tr><th>L7 Firewall</th><td x-text="nnCopyL7?'Yes':'No'"></td></tr>
+                <tr><th>SSIDs</th><td x-text="nnCopySSIDs?'Yes':'No'"></td></tr>
+                <tr><th>Group Policies</th><td x-text="nnCopyGroupPolicies?'Yes':'No'"></td></tr>
+              </tbody>
+            </table>
+            <div class="d-flex gap-2">
+              <button class="btn btn-success" @click="nnCreate()" :disabled="nnLoading">
+                <span x-show="nnLoading" class="spinner-border spinner-border-sm me-1"></span>
+                Create Network
+              </button>
+              <button class="btn btn-outline-secondary" @click="nnStep=4">Back</button>
+            </div>
+          </div>
+        </div>
+
+        <!-- Step 6: Result -->
+        <div x-show="nnStep===6">
+          <template x-if="nnResult">
+            <div class="page-card">
+              <div class="section-header">Step 6 — Results</div>
+              <div class="alert" :class="nnResult.success?'alert-success':'alert-danger'">
+                <span x-show="nnResult.success"><i class="bi bi-check-circle me-1"></i>Network <strong x-text="nnResult.network_name"></strong> created successfully!</span>
+                <span x-show="!nnResult.success"><i class="bi bi-x-circle me-1"></i><span x-text="nnResult.error"></span></span>
+              </div>
+              <table class="table table-sm">
+                <thead><tr><th>Step</th><th>Result</th><th>Detail</th></tr></thead>
+                <tbody>
+                  <template x-for="s in nnResult.steps" :key="s.label">
+                    <tr>
+                      <td x-text="s.label"></td>
+                      <td><span class="badge" :class="s.ok?'bg-success':'bg-danger'" x-text="s.ok?'OK':'Failed'"></span></td>
+                      <td class="small text-muted" x-text="s.detail"></td>
+                    </tr>
+                  </template>
+                </tbody>
+              </table>
+              <button class="btn btn-outline-primary" @click="startNewNet()">Create Another</button>
+            </div>
+          </template>
+        </div>
+      </div>
+
+      <!-- ══════════════════════ DEVICE ADDRESSES ════════════════════════════ -->
+      <div x-show="page==='deviceaddr'">
+        <div class="wizard-steps mb-4">
+          <template x-for="s in [1,2,3,4]" :key="s">
+            <template x-if="true">
+              <span class="d-flex align-items-center">
+                <span class="step-bubble"
+                      :class="daStep>s?'done':daStep===s?'active':'pending'"
+                      x-text="daStep>s?'✓':s"></span>
+                <span x-show="s<4" class="step-line" :class="daStep>s?'done':''"></span>
+              </span>
+            </template>
+          </template>
+        </div>
+
+        <!-- Step 1 — Select network -->
+        <div x-show="daStep===1">
+          <div class="page-card">
+            <div class="section-header">Step 1 — Select Network</div>
+            <p class="text-muted small">
+              Choose the network whose devices you want to re-address. All network types are
+              listed — appliances, access points, switches and cameras.
+            </p>
+            <input class="form-control form-control-sm mb-2" type="text" x-model="daNetworkSearch"
+                   placeholder="Search networks…" style="max-width:320px"/>
+            <template x-if="daNetworksLoading">
+              <div class="text-center py-4 text-muted">
+                <span class="spinner-border spinner-border-sm me-2"></span>Loading networks…
+              </div>
+            </template>
+            <template x-if="!daNetworksLoading && !daFilteredNetworks.length">
+              <div class="text-center py-4 text-muted">No networks found.</div>
+            </template>
+            <div style="max-height:400px;overflow-y:auto">
+              <template x-for="n in daFilteredNetworks" :key="n.id">
+                <div class="d-flex align-items-center gap-2 border-bottom py-2 network-row"
+                     style="cursor:pointer" @click="daSelectNetwork(n)">
+                  <i class="bi bi-diagram-3 text-muted"></i>
+                  <span class="fw-semibold small" x-text="n.name"></span>
+                  <span class="text-muted small ms-1" x-text="(n.productTypes||[]).join(', ')"></span>
+                  <span class="ms-auto">
+                    <span x-show="daDevicesLoading && daNetwork?.id===n.id"
+                          class="spinner-border spinner-border-sm text-primary"></span>
+                    <i x-show="!(daDevicesLoading && daNetwork?.id===n.id)"
+                       class="bi bi-chevron-right text-muted"></i>
+                  </span>
+                </div>
+              </template>
+            </div>
+          </div>
+        </div>
+
+        <!-- Step 2 — Select devices -->
+        <div x-show="daStep===2">
+          <div class="page-card">
+            <div class="section-header">
+              Step 2 — Select Devices in <em x-text="daNetwork?.name"></em>
+            </div>
+            <p class="text-muted small">
+              Tick the devices that should receive the new address. Use <strong>Select All</strong>
+              to take the whole network, then untick any device you want to leave alone.
+            </p>
+            <div class="d-flex align-items-center gap-2 mb-2 flex-wrap">
+              <input class="form-control form-control-sm" type="text" x-model="daDeviceSearch"
+                     placeholder="Search name, model, serial or address…" style="max-width:320px"/>
+              <button class="btn btn-sm btn-outline-secondary" @click="daSelectAll()">Select All</button>
+              <button class="btn btn-sm btn-outline-secondary" @click="daDeselectAll()">Deselect All</button>
+              <span class="text-muted small ms-auto"
+                    x-text="`${daSelectedSerials.length} of ${daDevices.length} device(s) selected`"></span>
+            </div>
+            <div class="table-wrap" style="max-height:420px;overflow-y:auto">
+              <table class="table table-hover mb-0">
+                <thead>
+                  <tr>
+                    <th style="width:36px"></th>
+                    <th>Device Name</th>
+                    <th>Model</th>
+                    <th>Serial</th>
+                    <th>Current Address</th>
+                    <th>Latitude</th>
+                    <th>Longitude</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  <template x-if="!daFilteredDevices.length">
+                    <tr><td colspan="7" class="text-center py-4 text-muted">No devices found.</td></tr>
+                  </template>
+                  <template x-for="d in daFilteredDevices" :key="d.serial">
+                    <tr>
+                      <td>
+                        <input type="checkbox" class="form-check-input"
+                               :checked="daSelectedSerials.includes(d.serial)"
+                               @change="daToggleDevice(d.serial)"/>
+                      </td>
+                      <td class="fw-semibold small" x-text="daLabel(d)"></td>
+                      <td class="small text-muted" x-text="d.model || '—'"></td>
+                      <td class="small text-muted font-monospace" x-text="d.serial"></td>
+                      <td class="small" x-text="(d.address||'').trim() || '(no address set)'"></td>
+                      <td class="small text-muted" x-text="daCoord(d.lat)"></td>
+                      <td class="small text-muted" x-text="daCoord(d.lng)"></td>
+                    </tr>
+                  </template>
+                </tbody>
+              </table>
+            </div>
+            <div class="mt-3 d-flex gap-2">
+              <button class="btn btn-primary" @click="daGoToAddress()"
+                      :disabled="!daSelectedSerials.length">
+                Next: New Address
+                <span class="badge bg-white text-primary ms-1" x-text="daSelectedSerials.length"></span>
+              </button>
+              <button class="btn btn-outline-secondary" @click="daStep=1">Back</button>
+            </div>
+          </div>
+        </div>
+
+        <!-- Step 3 — New address + preview -->
+        <div x-show="daStep===3">
+          <div class="page-card">
+            <div class="section-header">Step 3 — New Address &amp; Preview</div>
+            <p class="text-muted small">
+              Enter the site address to apply to every selected device. Meraki geocodes the address
+              and moves each device's dashboard map marker to match.
+              No other device setting is changed.
+            </p>
+            <div class="d-flex align-items-center gap-2 mb-3 flex-wrap">
+              <label class="form-label fw-semibold mb-0">New address</label>
+              <input class="form-control" type="text" x-model="daNewAddress"
+                     @input="daPreview=null" @keydown.enter="daRunPreview()"
+                     placeholder="e.g. 500 Terry A Francois Blvd, San Francisco, CA 94158, USA"
+                     style="max-width:520px"/>
+              <button class="btn btn-outline-primary" @click="daRunPreview()"
+                      :disabled="!daNewAddress.trim() || daPreviewLoading">
+                <span x-show="daPreviewLoading" class="spinner-border spinner-border-sm me-1"></span>
+                Generate Preview
+              </button>
+            </div>
+
+            <template x-if="daPreview">
+              <div>
+                <div class="mb-2">
+                  <span class="badge badge-new me-1" x-text="`${daPreview.change_count} address change${daPreview.change_count===1?'':'s'}`"></span>
+                  <span x-show="daPreview.remap_count" class="badge bg-warning text-dark me-1"
+                        x-text="`${daPreview.remap_count} map marker fix${daPreview.remap_count===1?'':'es'}`"></span>
+                  <span class="badge badge-exists me-1" x-text="`${daPreview.unchanged_count} already correct`"></span>
+                  <span class="badge bg-secondary" x-text="`${daPreview.total_count} selected`"></span>
+                </div>
+                <div class="table-wrap" style="max-height:360px;overflow-y:auto">
+                  <table class="table mb-0">
+                    <thead>
+                      <tr>
+                        <th>Device Name</th><th>Serial</th>
+                        <th>Current Address</th><th>New Address</th><th>Status</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      <template x-for="d in daPreview.devices" :key="d.serial">
+                        <tr :class="d.status==='change'?'change-new':(d.status==='remap'?'change-duplicate':'change-unchanged')">
+                          <td class="small fw-semibold" x-text="d.name"></td>
+                          <td class="small text-muted font-monospace" x-text="d.serial"></td>
+                          <td class="small" x-text="d.current_address || '(no address set)'"></td>
+                          <td class="small" x-text="d.new_address"></td>
+                          <td class="small">
+                            <span class="badge"
+                                  :class="d.status==='change'?'badge-new':(d.status==='remap'?'bg-warning text-dark':'badge-exists')"
+                                  x-text="d.detail"></span>
+                          </td>
+                        </tr>
+                      </template>
+                    </tbody>
+                  </table>
+                </div>
+              </div>
+            </template>
+
+            <div class="mt-3 d-flex gap-2">
+              <button class="btn btn-success" @click="daExecute()"
+                      :disabled="!daPreview || daRunning">
+                <i class="bi bi-geo-alt-fill me-1"></i>
+                Update <span x-text="daPreview ? daPreview.update_count : 0"></span> Device(s)
+              </button>
+              <button class="btn btn-outline-secondary" @click="daStep=2">Back</button>
+            </div>
+          </div>
+        </div>
+
+        <!-- Step 4 — Progress + results -->
+        <div x-show="daStep===4">
+          <div class="page-card">
+            <div class="section-header">Step 4 — Results</div>
+            <p class="text-muted small">
+              Each device is updated independently — a failure on one device does not stop the rest.
+              Every update is verified by re-reading the device from Meraki.
+            </p>
+
+            <div class="progress mb-2" style="height:20px">
+              <div class="progress-bar" :class="daRunning?'progress-bar-striped progress-bar-animated':''"
+                   :style="`width:${daProgressPct}%`" x-text="`${daProgressPct}%`"></div>
+            </div>
+            <div class="small text-muted mb-3">
+              <template x-if="daRunning">
+                <span x-text="`Updating ${daDone+1} of ${daTotal} — ${daCurrentLabel}`"></span>
+              </template>
+              <template x-if="!daRunning && daTotal">
+                <span x-text="`Finished — ${daSuccessCount} updated (${daVerifiedCount} verified), ${daFailedCount} failed.`"></span>
+              </template>
+            </div>
+
+            <div class="table-wrap" style="max-height:420px;overflow-y:auto">
+              <table class="table mb-0">
+                <thead>
+                  <tr>
+                    <th>Device Name</th><th>Serial</th><th>Result</th>
+                    <th>New Address</th><th>Latitude</th><th>Longitude</th><th>Verification</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  <template x-if="!daResults.length">
+                    <tr><td colspan="7" class="text-center py-4 text-muted">Waiting for the first device…</td></tr>
+                  </template>
+                  <template x-for="r in daResults" :key="r.serial">
+                    <tr>
+                      <td class="small fw-semibold" x-text="r.name"></td>
+                      <td class="small text-muted font-monospace" x-text="r.serial"></td>
+                      <td>
+                        <span class="badge"
+                              :class="!r.success ? 'bg-danger' : (r.verified ? 'bg-success' : 'bg-warning text-dark')"
+                              x-text="!r.success ? 'Failed' : (r.verified ? 'Updated' : 'Updated (unverified)')"></span>
+                      </td>
+                      <td class="small" x-text="r.new_address || '—'"></td>
+                      <td class="small text-muted" x-text="daCoord(r.lat)"></td>
+                      <td class="small text-muted" x-text="daCoord(r.lng)"></td>
+                      <td class="small text-muted" x-text="r.error || r.verify_note"></td>
+                    </tr>
+                  </template>
+                </tbody>
+              </table>
+            </div>
+
+            <div class="mt-3 d-flex gap-2">
+              <button class="btn btn-outline-primary" @click="startDeviceAddrWizard()"
+                      :disabled="daRunning">Start Over</button>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <!-- ════════════════════════ ACTIVITY LOG ══════════════════════════════ -->
+      <div x-show="page==='activity'">
+        <div class="page-card">
+          <div class="d-flex justify-content-between align-items-center mb-3">
+            <div class="section-header mb-0">Activity Log <span class="badge bg-secondary ms-1" x-text="actLog.length"></span></div>
+            <button class="btn btn-sm btn-outline-secondary" @click="actLog=[]">Clear</button>
+          </div>
+          <template x-if="!actLog.length">
+            <div class="text-muted small text-center py-4">No activity yet.</div>
+          </template>
+          <div style="max-height:600px;overflow-y:auto">
+            <template x-for="(e,i) in actLog" :key="i">
+              <div class="activity-entry" :class="'log-'+e.level">
+                <span class="text-muted me-2" x-text="e.time"></span>
+                <span class="badge me-2 text-uppercase" style="font-size:.65rem"
+                  :class="{'bg-primary':e.level==='info','bg-success':e.level==='success','bg-warning text-dark':e.level==='warning','bg-danger':e.level==='error'}"
+                  x-text="e.level"></span>
+                <span x-text="e.msg"></span>
+              </div>
+            </template>
+          </div>
+        </div>
+      </div>
+
+      </div><!-- /selectedOrgId wrapper -->
+
+    </div><!-- /content -->
+  </div><!-- /main -->
+</div><!-- /app-shell -->
+
+<script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/js/bootstrap.bundle.min.js" integrity="sha384-YvpcrYf0tY3lHB60NNkmXc5s9fDVZLESaAA55NDzOxhy9GkcIdslK1eN7N6jIeHz" crossorigin="anonymous"></script>
+<script src="https://cdn.jsdelivr.net/npm/alpinejs@3.14.1/dist/cdn.min.js" integrity="sha384-l8f0VcPi/M1iHPv8egOnY/15TDwqgbOR1anMIJWvU6nLRgZVLTLSaNqi/TOoT5FhX" crossorigin="anonymous" defer></script>
+<script src="/static/app.js"></script>
+<style>[x-cloak]{display:none!important}</style>
+</body>
+</html>
