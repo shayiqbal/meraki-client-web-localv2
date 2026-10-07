@@ -7,6 +7,7 @@ function app() {
     csrfToken: '',
     apiKey: '',
     loginError: '',
+    loginStatus: '',
     loginLoading: false,
 
     // ── Navigation ────────────────────────────────────────────────────────────
@@ -161,9 +162,10 @@ function app() {
     // =========================================================================
     async login() {
       this.loginError = '';
+      this.loginStatus = 'Validating API key with Meraki. This takes up to 15 seconds.';
       this.loginLoading = true;
       try {
-        const res = await this.api('POST', '/api/login', { api_key: this.apiKey });
+        const res = await this.api('POST', '/api/login', { api_key: this.apiKey }, 20000);
         this.apiKey = '';
         this.authenticated = true;
         this.csrfToken = res.csrf_token;
@@ -180,6 +182,7 @@ function app() {
         this.loginError = e.message;
         this.apiKey = '';
       } finally {
+        this.loginStatus = '';
         this.loginLoading = false;
       }
     },
@@ -932,9 +935,9 @@ function app() {
     // =========================================================================
     // API helpers
     // =========================================================================
-    async api(method, path, body) {
+    async api(method, path, body, timeoutMs = 30000) {
       const controller = new AbortController();
-      const timeout = setTimeout(() => controller.abort(), 30000);
+      const timeout = setTimeout(() => controller.abort(), timeoutMs);
       const opts = {
         method,
         credentials: 'same-origin',
@@ -954,7 +957,7 @@ function app() {
         }
         return res.json();
       } catch (error) {
-        if (error.name === 'AbortError') throw new Error('Request timed out. Check your internet connection, proxy/VPN, and access to api.meraki.com.');
+        if (error.name === 'AbortError') throw new Error('Login timed out. Check your internet connection, proxy/VPN, firewall, and access to api.meraki.com.');
         throw error;
       } finally {
         clearTimeout(timeout);

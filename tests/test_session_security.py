@@ -77,7 +77,16 @@ def test_frontend_dependency_integrity_hashes_are_exact():
 def test_frontend_api_requests_have_a_timeout():
     client_code = (Path(__file__).parents[1] / "webapp" / "static" / "app.js").read_text()
     assert "AbortController" in client_code
-    assert "Request timed out" in client_code
+    assert "Login timed out" in client_code
+
+
+def test_login_has_a_visible_bounded_validation_state():
+    root = Path(__file__).parents[1]
+    client_code = (root / "webapp" / "static" / "app.js").read_text()
+    template = (root / "webapp" / "templates" / "index.html").read_text()
+    assert "Validating API key with Meraki" in client_code
+    assert "/api/login', { api_key: this.apiKey }, 20000" in client_code
+    assert "loginStatus" in template
 
 
 def test_login_validation_has_a_bounded_direct_meraki_request():

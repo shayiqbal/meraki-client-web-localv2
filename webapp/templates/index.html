@@ -22,6 +22,7 @@
         <input x-model="apiKey" type="password" class="form-control" placeholder="Paste your API key…" autocomplete="off" :disabled="loginLoading"/>
       </div>
       <div x-show="loginError" class="alert alert-danger py-2 small" x-text="loginError"></div>
+      <div x-show="loginLoading" class="text-muted small mb-2" x-text="loginStatus"></div>
       <button type="submit" class="btn btn-primary w-100" :disabled="loginLoading || !apiKey.trim()">
         <span x-show="loginLoading" class="spinner-border spinner-border-sm me-2"></span>
         <span x-text="loginLoading ? 'Connecting…' : 'Connect'"></span>
