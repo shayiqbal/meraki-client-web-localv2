@@ -31,8 +31,8 @@ A browser-based management tool for Cisco Meraki MX networks. Run it locally or 
 ### macOS / Linux
 
 ```bash
-git clone https://github.com/shayiqbal/client-meraki-web.git
-cd client-meraki-web
+git clone https://github.com/shayiqbal/meraki-client-web-localv2.git
+cd meraki-client-web-localv2
 bash run_web.sh
 ```
 
@@ -45,9 +45,9 @@ The script will:
 
 ### Windows
 
-```
-git clone https://github.com/shayiqbal/client-meraki-web.git
-cd client-meraki-web
+```bat
+git clone https://github.com/shayiqbal/meraki-client-web-localv2.git
+cd meraki-client-web-localv2
 run_web.bat
 ```
 
@@ -58,8 +58,8 @@ Double-click `run_web.bat` or run it from Command Prompt. Same steps as above.
 ### Docker
 
 ```bash
-git clone https://github.com/shayiqbal/client-meraki-web.git
-cd client-meraki-web
+git clone https://github.com/shayiqbal/meraki-client-web-localv2.git
+cd meraki-client-web-localv2
 docker build -t meraki-config-manager-v2 .
 docker run -p 127.0.0.1:8000:8000 meraki-config-manager-v2
 ```

@@ -18,6 +18,10 @@ if errorlevel 1 (
 )
 for /f "tokens=2" %%v in ('python --version 2^>^&1') do set PYVER=%%v
 echo [1/3] Python !PYVER! found.
+for /f "tokens=1,2 delims=." %%a in ("!PYVER!") do (
+    if %%a LSS 3 goto :unsupported_python
+    if %%a EQU 3 if %%b LSS 10 goto :unsupported_python
+)
 
 :: ── Virtual environment ────────────────────────────────────────────────────────
 set VENV=.web_venv
@@ -51,3 +55,9 @@ start "" /b cmd /c "timeout /t 3 /nobreak >nul && start http://127.0.0.1:8000"
 
 python -m uvicorn webapp.app:app --host 127.0.0.1 --port 8000
 pause
+exit /b 0
+
+:unsupported_python
+echo [ERROR] Python 3.10 or newer is required.
+pause
+exit /b 1
