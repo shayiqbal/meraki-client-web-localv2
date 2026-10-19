@@ -57,6 +57,25 @@ def test_skip_mode_reports_conflict_without_writing():
 
     assert plan["items"][0]["action"] == "conflict"
     assert client.policies["target"][0]["bandwidth"]["settings"] == "network default"
+    operation = service.execute(plan, allow_overwrite=False)
+    assert operation["results"][0]["action"] == "conflict"
+    assert not operation["results"][0]["success"]
+    assert "Skipped" in operation["results"][0]["detail"]
+
+
+def test_missing_policy_is_explicitly_reported_and_created():
+    client = FakeClient()
+    client.policies["target"] = []
+    service = GroupPolicyCopyService(client)
+
+    plan = service.dry_run("source", ["source-policy"], ["target"], "skip")
+
+    assert plan["items"][0]["action"] == "missing"
+    assert plan["items"][0]["changed_fields"] == []
+    operation = service.execute(plan, allow_overwrite=False)
+    assert operation["results"][0]["action"] == "missing"
+    assert "bandwidth" in operation["results"][0]["applied_fields"]
+    assert client.policies["target"][0]["name"] == "Staff"
 
 
 def test_overwrite_replaces_all_writable_settings_and_rolls_back():
@@ -70,6 +89,7 @@ def test_overwrite_replaces_all_writable_settings_and_rolls_back():
     assert target["groupPolicyId"] == "target-policy"
     assert target["bandwidth"]["settings"] == "custom"
     assert target["firewallAndTrafficShaping"]["l3FirewallRules"] == [{"policy": "deny"}]
+    assert target["vlanTagging"] == {"settings": "network default"}
 
     results = service.rollback(operation)
     assert results == [{"network_id": "target", "action": "rolled_back", "success": True, "error": ""}]

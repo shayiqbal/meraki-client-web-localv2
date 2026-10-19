@@ -25,3 +25,14 @@ def list_networks(
         return make_client(session).networks(org_id)
     except Exception:
         raise HTTPException(502, "Could not load networks from Meraki.")
+
+
+@router.get("/comparison-networks")
+def list_comparison_networks(
+    org_id: str = Query(...),
+    session=Depends(require_session),
+) -> list:
+    try:
+        return make_client(session).comparison_networks(org_id)
+    except Exception:
+        raise HTTPException(502, "Could not load comparison networks from Meraki.")

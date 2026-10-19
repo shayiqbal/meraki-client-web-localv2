@@ -33,6 +33,21 @@ def test_csrf_blocks_unsafe_requests_without_token():
     assert client.post("/api/exclusions/dry-run", json={}).status_code == 401
 
 
+def test_authenticated_exclusion_reads_do_not_require_a_csrf_token(monkeypatch):
+    monkeypatch.setattr("webapp.routers.auth.validate_api_key", lambda key: [{"id": "org", "name": "Org"}])
+    monkeypatch.setattr(
+        "webapp.routers.exclusions.make_client",
+        lambda session: type("Client", (), {"get_rules": lambda self, org_id, network_id: type("Rules", (), {"rules": [], "mode": "merge", "metadata": {}})()})(),
+    )
+    client = TestClient(app)
+    client.post("/api/login", json={"api_key": "fake-api-key"})
+
+    response = client.get("/api/exclusions?org_id=org&network_id=network")
+
+    assert response.status_code == 200
+    assert response.json()["rules"] == []
+
+
 def test_every_authenticated_post_route_declares_csrf_protection():
     root = Path(__file__).parents[1] / "webapp" / "routers"
     for path in root.glob("*.py"):

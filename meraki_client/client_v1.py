@@ -185,14 +185,18 @@ class MerakiVpnClientV1(MerakiVpnClient):
         )
 
     def get_appliance_ssids(self, network_id: str) -> list[dict[str, Any]]:
-        try:
-            return self._call(
-                lambda: self.dashboard.appliance.getNetworkApplianceSsids(network_id),
-                "get appliance SSIDs",
-                network_id=network_id,
-            )
-        except MerakiClientError:
-            return []
+        return self._call(
+            lambda: self.dashboard.appliance.getNetworkApplianceSsids(network_id),
+            "get appliance SSIDs",
+            network_id=network_id,
+        )
+
+    def get_wireless_ssids(self, network_id: str) -> list[dict[str, Any]]:
+        return self._call(
+            lambda: self.dashboard.wireless.getNetworkWirelessSsids(network_id),
+            "get wireless SSIDs",
+            network_id=network_id,
+        )
 
     def update_appliance_ssid(
         self, network_id: str, number: int | str, **kwargs: Any
@@ -244,7 +248,7 @@ class MerakiVpnClientV1(MerakiVpnClient):
         """Only forward documented writable Group Policy attributes to Meraki."""
         writable = {
             "bandwidth", "firewallAndTrafficShaping", "scheduling", "vlanTagging",
-            "splashAuthSettings", "contentFiltering",
+            "splashAuthSettings", "contentFiltering", "bonjourForwarding",
         }
         return {key: value for key, value in policy_data.items() if key in writable}
 

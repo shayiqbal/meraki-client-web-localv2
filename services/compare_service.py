@@ -5,10 +5,12 @@ VPN exclusion rules, MX appliance SSIDs, and basic network settings.
 """
 from __future__ import annotations
 
+import re
 from dataclasses import dataclass, field
 from typing import Any, Callable, Literal
 
 from meraki_client.client_v1 import MerakiVpnClientV1
+from rules.models import RuleSet
 
 
 Status = Literal["match", "missing", "different", "na"]
@@ -52,8 +54,8 @@ class CompareService:
 
         if progress:
             progress(f"Reading source: {source_network['name']}…")
-        src_rules = self.client.get_rules(organization_id, src_id)
-        src_ssids = self._safe_ssids(src_id)
+        src_rules = self._safe_rules(organization_id, src_id)
+        src_ssids, src_ssid_errors = self._read_ssids(src_id)
         src_settings = self._safe_settings(src_id)
         src_net_info = self._safe_network(src_id)
 
@@ -61,9 +63,11 @@ class CompareService:
         for net in target_networks:
             if progress:
                 progress(f"Reading: {net['name']}…")
+            target_ssids, target_ssid_errors = self._read_ssids(net["id"])
             target_data[net["id"]] = {
-                "rules": self.client.get_rules(organization_id, net["id"]),
-                "ssids": self._safe_ssids(net["id"]),
+                "rules": self._safe_rules(organization_id, net["id"]),
+                "ssids": target_ssids,
+                "ssid_errors": target_ssid_errors,
                 "settings": self._safe_settings(net["id"]),
                 "net_info": self._safe_network(net["id"]),
             }
@@ -72,7 +76,9 @@ class CompareService:
             source_network=source_network,
             target_networks=target_networks,
             vpn_rules=self._compare_rules(src_rules, target_networks, target_data),
-            ssids=self._compare_ssids(src_ssids, target_networks, target_data),
+            ssids=self._compare_ssids(
+                src_ssids, src_ssid_errors, target_networks, target_data
+            ),
             settings=self._compare_settings(
                 src_settings, src_net_info, target_networks, target_data
             ),
@@ -139,55 +145,124 @@ class CompareService:
 
         return rows
 
-    # ── MX appliance SSIDs ─────────────────────────────────────────────────
+    # ── MX and Dashboard wireless SSIDs ────────────────────────────────────
+
+    _SSID_FIELDS = (
+        ("name", "name"),
+        ("enabled", "enabled"),
+        ("authMode", "auth"),
+        ("defaultVlanId", "VLAN"),
+        ("encryptionMode", "encryption"),
+        ("visible", "visible"),
+    )
 
     @staticmethod
-    def _compare_ssids(src_ssids, targets, target_data) -> list[CompareRow]:
+    def _ssid_key(ssid: dict[str, Any]) -> tuple[str, str]:
+        """SSID names, not numbered slots, identify equivalent configurations."""
+        return (
+            ssid["ssidSource"],
+            (ssid.get("name") or "").strip().casefold(),
+        )
+
+    @staticmethod
+    def _is_dashboard_placeholder_ssid(ssid: dict[str, Any]) -> bool:
+        """Dashboard returns unused slots as disabled 'Unconfigured SSID N' records."""
+        return (
+            ssid.get("ssidSource") == "Dashboard Wi-Fi"
+            and not ssid.get("enabled")
+            and bool(re.fullmatch(r"Unconfigured SSID \d+", ssid.get("name") or ""))
+        )
+
+    @staticmethod
+    def _compare_ssids(src_ssids, src_errors, targets, target_data) -> list[CompareRow]:
         rows: list[CompareRow] = []
 
         if not src_ssids:
-            # Source has no wireless SSIDs — mark all targets as N/A
+            source_detail = (
+                "Could not read source SSIDs: " + "; ".join(src_errors)
+                if src_errors
+                else "No Dashboard Wi-Fi or MX SSIDs configured on source"
+            )
             cells: dict[str, Cell] = {
-                net["id"]: Cell("na", "Source network has no wireless SSIDs")
+                net["id"]: Cell("na", source_detail)
                 for net in targets
             }
             rows.append(CompareRow(
                 label="Wireless SSIDs",
-                source_display="Not available (no wireless on source)",
+                source_display=source_detail,
                 cells=cells,
             ))
             return rows
 
-        src_by_num = {s.get("number", i): s for i, s in enumerate(src_ssids)}
+        src_by_name = {CompareService._ssid_key(ssid): ssid for ssid in src_ssids}
 
-        for num, src in sorted(src_by_num.items()):
-            name = src.get("name") or f"SSID {num}"
+        for (ssid_source, name_key), src in sorted(src_by_name.items()):
+            name = src.get("name") or "Unnamed SSID"
             enabled = src.get("enabled", False)
             auth = src.get("authMode", "open")
-            display = f"[{num}] {name}  enabled={enabled}  auth={auth}"
+            display = f"enabled={enabled}; auth={auth}; VLAN={src.get('defaultVlanId', '—')}"
             cells: dict[str, Cell] = {}
             for net in targets:
                 t_ssids = target_data[net["id"]]["ssids"]
-                t_by_num = {s.get("number", i): s for i, s in enumerate(t_ssids)}
-                t = t_by_num.get(num)
-                if t is None:
-                    cells[net["id"]] = Cell("na", "SSID slot not available")
-                elif (
-                    t.get("name") == src.get("name")
-                    and t.get("enabled") == src.get("enabled")
-                    and t.get("authMode") == src.get("authMode")
-                ):
-                    cells[net["id"]] = Cell("match", "Name, enabled state and auth mode match")
+                t_errors = target_data[net["id"]]["ssid_errors"]
+                t_by_name = {
+                    CompareService._ssid_key(ssid): ssid for ssid in t_ssids
+                }
+                t = t_by_name.get((ssid_source, name_key))
+                if not t_ssids and t_errors:
+                    cells[net["id"]] = Cell(
+                        "na", "Could not read target SSIDs: " + "; ".join(t_errors)
+                    )
+                elif t is None:
+                    cells[net["id"]] = Cell("missing", "SSID name is missing")
                 else:
-                    diffs = []
-                    if t.get("name") != src.get("name"):
-                        diffs.append(f"name: '{t.get('name')}'")
-                    if t.get("enabled") != src.get("enabled"):
-                        diffs.append(f"enabled: {t.get('enabled')}")
-                    if t.get("authMode") != src.get("authMode"):
-                        diffs.append(f"auth: {t.get('authMode')}")
-                    cells[net["id"]] = Cell("different", "; ".join(diffs))
-            rows.append(CompareRow(label=name, source_display=display, cells=cells))
+                    diffs = [
+                        f"{label}: {t.get(field, '—')}"
+                        for field, label in CompareService._SSID_FIELDS
+                        if (
+                            CompareService._ssid_key(t) != CompareService._ssid_key(src)
+                            if field == "name"
+                            else t.get(field) != src.get(field)
+                        )
+                    ]
+                    cells[net["id"]] = (
+                        Cell("match", "SSID settings match")
+                        if not diffs
+                        else Cell("different", "; ".join(diffs))
+                    )
+            rows.append(CompareRow(
+                label=f"{name} [{ssid_source}]",
+                source_display=display,
+                cells=cells,
+            ))
+
+        source_keys = set(src_by_name)
+        extra_keys: dict[tuple[str, str], set[str]] = {}
+        extra_ssids: dict[tuple[str, str], dict[str, Any]] = {}
+        for net in targets:
+            for ssid in target_data[net["id"]]["ssids"]:
+                key = CompareService._ssid_key(ssid)
+                if key not in source_keys:
+                    extra_keys.setdefault(key, set()).add(net["id"])
+                    extra_ssids.setdefault(key, ssid)
+
+        for (ssid_source, _), network_ids in sorted(extra_keys.items()):
+            ssid = extra_ssids[(ssid_source, _)]
+            name = ssid.get("name") or "Unnamed SSID"
+            display = "Extra SSID, not in source"
+            cells = {
+                net["id"]: (
+                    Cell("different", "Extra SSID name not in source")
+                    if net["id"] in network_ids
+                    else Cell("na", "Not present on this target")
+                )
+                for net in targets
+            }
+            rows.append(CompareRow(
+                label=f"[EXTRA] {name} [{ssid_source}]",
+                source_display=display,
+                cells=cells,
+            ))
         return rows
 
     # ── Basic settings ─────────────────────────────────────────────────────
@@ -228,11 +303,29 @@ class CompareService:
 
     # ── Safe API calls ─────────────────────────────────────────────────────
 
-    def _safe_ssids(self, network_id: str) -> list[dict[str, Any]]:
+    def _safe_rules(self, organization_id: str, network_id: str) -> RuleSet:
         try:
-            return self.client.get_appliance_ssids(network_id)
+            return self.client.get_rules(organization_id, network_id)
         except Exception:
-            return []
+            return RuleSet()
+
+    def _read_ssids(self, network_id: str) -> tuple[list[dict[str, Any]], list[str]]:
+        ssids: list[dict[str, Any]] = []
+        errors: list[str] = []
+        for source, reader in (
+            ("Dashboard Wi-Fi", self.client.get_wireless_ssids),
+            ("MX", self.client.get_appliance_ssids),
+        ):
+            try:
+                records = ({**ssid, "ssidSource": source} for ssid in reader(network_id) or [])
+                ssids.extend(ssid for ssid in records if not self._is_dashboard_placeholder_ssid(ssid))
+            except Exception as exc:
+                errors.append(f"{source}: {exc}")
+        return ssids, errors
+
+    def _safe_ssids(self, network_id: str) -> list[dict[str, Any]]:
+        """Backward-compatible helper for callers that only need SSID records."""
+        return self._read_ssids(network_id)[0]
 
     def _safe_settings(self, network_id: str) -> dict[str, Any]:
         try:

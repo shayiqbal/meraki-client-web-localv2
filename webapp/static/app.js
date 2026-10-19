@@ -36,6 +36,7 @@ function app() {
     orgs: [],
     selectedOrgId: '',
     networks: [],
+    comparisonNetworks: [],
     networksLoading: false,
 
     // ── Dashboard ─────────────────────────────────────────────────────────────
@@ -66,6 +67,7 @@ function app() {
     copyPreview: null,
     copyResults: null,
     copyLoading: false,
+    copySourceError: '',
     copySourceSearch: '',
     copyDestSearch: '',
 
@@ -268,12 +270,12 @@ function app() {
 
     get filteredCmpSourceNetworks() {
       const q = this.cmpSourceSearch.toLowerCase();
-      return this.networks.filter(n => !q || n.name.toLowerCase().includes(q));
+      return this.comparisonNetworks.filter(n => !q || n.name.toLowerCase().includes(q));
     },
 
     get filteredCmpTargetNetworks() {
       const q = this.cmpTargetSearch.toLowerCase();
-      return this.networks.filter(n =>
+      return this.comparisonNetworks.filter(n =>
         n.id !== this.cmpSource?.id &&
         (!q || n.name.toLowerCase().includes(q))
       );
@@ -427,11 +429,12 @@ function app() {
       this.copyStep = 1; this.copySourceNetwork = null; this.copySourceRules = [];
       this.copySelectedRuleIdxs = []; this.copyDestNetworkIds = [];
       this.copyPreview = null; this.copyResults = null;
-      this.copySourceSearch = ''; this.copyDestSearch = '';
+      this.copySourceSearch = ''; this.copyDestSearch = ''; this.copySourceError = '';
       this.page = 'copy';
     },
 
     async copySelectSource(network) {
+      this.copySourceError = '';
       this.copySourceNetwork = network;
       this.copyLoading = true;
       try {
@@ -440,6 +443,8 @@ function app() {
         this.copySelectedRuleIdxs = rs.rules.map((_, i) => i);
         this.copyStep = 2;
       } catch (e) {
+        this.copySourceNetwork = null;
+        this.copySourceError = `Could not load VPN rules from ${network.name}: ${e.message}`;
         this.log(`Failed to load rules: ${e.message}`, 'error');
       } finally {
         this.copyLoading = false;
@@ -557,6 +562,7 @@ function app() {
 
     async runGpPreview() {
       if (!this.gpSelectedPolicies.length || !this.gpDestNetworks.length) return;
+      this.gpOverwriteAcknowledged = false;
       this.gpLoading = true;
       try {
         this.gpPreview = await this.api('POST', '/api/group-policies/dry-run', {
@@ -590,9 +596,9 @@ function app() {
         this.gpOperationId = operation.operation_id;
         this.gpResults = operation.results;
         this.gpStep = 5;
-        const added = this.gpResults.filter(r => r.action === 'create' && r.success).length;
+        const added = this.gpResults.filter(r => r.action === 'missing' && r.success).length;
         this.log(
-          `Group policy copy complete: ${added} policy/policies added across ` +
+          `Group policy copy complete: ${added} missing policy/policies added across ` +
           `${this.gpResults.length} network(s).`, 'success'
         );
       } catch (e) {
@@ -621,10 +627,15 @@ function app() {
     // =========================================================================
     // Compare Networks
     // =========================================================================
-    startCompare() {
+    async startCompare() {
       this.cmpSource = null; this.cmpTargetIds = []; this.cmpReport = null; this.cmpTab = 'vpn';
       this.cmpSourceSearch = ''; this.cmpTargetSearch = '';
       this.page = 'compare';
+      try {
+        this.comparisonNetworks = await this.api('GET', `/api/comparison-networks?org_id=${this.selectedOrgId}`);
+      } catch (e) {
+        this.log(`Could not load networks for comparison: ${e.message}`, 'error');
+      }
     },
 
     toggleCmpTarget(id) {
@@ -634,7 +645,7 @@ function app() {
     },
 
     get cmpTargetNetworks() {
-      return this.networks.filter(n => this.cmpTargetIds.includes(n.id) && n.id !== this.cmpSource?.id);
+      return this.comparisonNetworks.filter(n => this.cmpTargetIds.includes(n.id) && n.id !== this.cmpSource?.id);
     },
 
     async runCompare() {

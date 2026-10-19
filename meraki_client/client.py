@@ -113,6 +113,15 @@ class MerakiVpnClient:
             or item.get("type") in {"appliance", "combined"}
         ]
 
+    def comparison_networks(self, organization_id: str) -> list[dict[str, Any]]:
+        """Networks that can have MX or MR SSID configuration."""
+        return [
+            item
+            for item in self.all_networks(organization_id)
+            if {"appliance", "wireless"}.intersection(item.get("productTypes", []))
+            or item.get("type") in {"appliance", "wireless", "combined"}
+        ]
+
     def _organization_rules(
         self, organization_id: str, network_id: str
     ) -> dict[str, Any]:

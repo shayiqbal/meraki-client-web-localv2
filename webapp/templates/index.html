@@ -102,7 +102,7 @@
     <div class="content">
 
       <!-- No org selected yet -->
-      <div x-show="!selectedOrgId" class="d-flex flex-column align-items-center justify-content-center" style="min-height:60vh">
+      <div x-show.important="!selectedOrgId" class="d-flex flex-column align-items-center justify-content-center" style="min-height:60vh">
         <i class="bi bi-building" style="font-size:3.5rem;color:#cbd5e1"></i>
         <h5 class="mt-3 text-muted fw-semibold">Select an Organization</h5>
         <p class="text-muted small">Choose an organization from the dropdown above to get started.</p>
@@ -387,12 +387,16 @@
                     <tr>
                       <td x-text="n.name"></td>
                       <td><template x-for="t in (n.tags||[])" :key="t"><span class="badge bg-light text-secondary me-1" x-text="t"></span></template></td>
-                      <td><button class="btn btn-sm btn-primary" @click="copySelectSource(n)" :disabled="copyLoading">Select</button></td>
+                      <td><button class="btn btn-sm btn-primary" type="button" @click="copySelectSource(n)" :disabled="copyLoading">
+                        <span x-show="copyLoading" class="spinner-border spinner-border-sm me-1"></span>
+                        Select
+                      </button></td>
                     </tr>
                   </template>
                 </tbody>
               </table>
             </div>
+            <div x-show="copySourceError" class="alert alert-danger py-2 small mt-3 mb-0" x-text="copySourceError"></div>
           </div>
         </div>
 
@@ -426,11 +430,6 @@
         <div x-show="copyStep===3">
           <div class="page-card">
             <div class="section-header">Step 3 — Select Destination Networks</div>
-            <div class="alert alert-light border small">
-              <div class="fw-semibold mb-1">Existing policy handling</div>
-              <label class="me-3"><input type="radio" value="skip" x-model="gpConflictMode"/> Skip existing policies</label>
-              <label><input type="radio" value="overwrite" x-model="gpConflictMode"/> Overwrite all writable settings and rules</label>
-            </div>
             <div class="d-flex align-items-center gap-2 mb-2">
               <input class="form-control form-control-sm" type="text" x-model="copyDestSearch" placeholder="Search networks…" style="max-width:280px"/>
               <span class="text-muted small" x-text="`${copyDestNetworkIds.length} selected`"></span>
@@ -611,6 +610,21 @@
                 </div>
               </template>
             </div>
+            <div class="border rounded p-3 mt-3">
+                <div class="fw-semibold small mb-1">When a destination already has a policy with the same name</div>
+                <div class="form-check">
+                  <input class="form-check-input" type="radio" id="gp-skip-conflicts" value="skip" x-model="gpConflictMode"/>
+                  <label class="form-check-label" for="gp-skip-conflicts">
+                    Skip differences <span class="text-muted small">(do not change the existing destination policy)</span>
+                  </label>
+                </div>
+                <div class="form-check mt-1">
+                  <input class="form-check-input" type="radio" id="gp-overwrite-conflicts" value="overwrite" x-model="gpConflictMode"/>
+                  <label class="form-check-label" for="gp-overwrite-conflicts">
+                    Overwrite from source <span class="text-muted small">(replace the destination policy settings with the source settings)</span>
+                  </label>
+                </div>
+            </div>
             <div class="mt-3 d-flex gap-2">
               <button class="btn btn-primary" @click="runGpPreview()"
                       :disabled="!gpDestNetworkIds.length || gpLoading">
@@ -633,7 +647,7 @@
                   <thead><tr><th>Destination</th><th>Policy</th><th>Planned Action</th><th>Changed Settings</th></tr></thead>
                   <tbody><template x-for="item in gpPreview.items" :key="`${item.network_id}-${item.policy_name}`"><tr>
                     <td x-text="item.network_name"></td><td x-text="item.policy_name"></td>
-                    <td><span class="badge" :class="item.action==='overwrite'?'bg-warning text-dark':item.action==='create'?'bg-success':item.action==='conflict'?'bg-danger':'bg-secondary'" x-text="item.action"></span></td>
+                    <td><span class="badge" :class="item.action==='overwrite'?'bg-warning text-dark':item.action==='missing'?'bg-success':item.action==='conflict'?'bg-danger':'bg-secondary'" x-text="item.action"></span></td>
                     <td x-text="item.changed_fields.join(', ') || 'No change'"></td>
                   </tr></template></tbody>
                 </table>
@@ -659,16 +673,17 @@
             <template x-if="gpResults">
               <div class="table-wrap">
                 <table class="table mb-0">
-                  <thead><tr><th>Network</th><th>Policy</th><th>Action</th><th>Status</th><th>Error</th></tr></thead>
+                  <thead><tr><th>Network</th><th>Policy</th><th>Action</th><th>Settings Applied / Skipped</th><th>Status</th><th>Details</th></tr></thead>
                   <tbody>
-                    <template x-for="r in gpResults" :key="r.network_id">
+                    <template x-for="r in gpResults" :key="`${r.network_id}-${r.policy_name}`">
                       <tr>
                         <td x-text="r.network_name"></td>
                         <td x-text="r.policy_name"></td>
                         <td x-text="r.action"></td>
-                        <td><span class="badge" :class="r.success?'bg-success':'bg-danger'"
-                                  x-text="r.success?'Success':'Failed'"></span></td>
-                        <td class="text-danger small" x-text="r.error"></td>
+                        <td class="small" x-text="r.applied_fields?.join(', ') || r.changed_fields?.join(', ') || 'No settings changed'"></td>
+                        <td><span class="badge" :class="r.action==='conflict'?'bg-secondary':r.success?'bg-success':'bg-danger'"
+                                  x-text="r.action==='conflict'?'Skipped':r.success?'Applied':'Failed'"></span></td>
+                        <td class="small" :class="r.error?'text-danger':''" x-text="r.error || r.detail"></td>
                       </tr>
                     </template>
                   </tbody>
@@ -745,7 +760,7 @@
               <table class="table table-bordered table-sm mb-0" style="min-width:600px">
                 <thead>
                   <tr>
-                    <th style="min-width:260px">Rule / Setting</th>
+                    <th style="min-width:260px" x-text="cmpTab==='ssids' ? 'SSID Name' : 'Rule / Setting'"></th>
                     <!-- Source network column -->
                     <th class="text-center" style="background:#e0f2fe;min-width:130px">
                       <span x-text="cmpReport.source_network.name"></span>
@@ -762,7 +777,7 @@
                     <tr :class="row.label.startsWith('[EXTRA]') ? 'table-warning' : ''">
                       <td class="small" style="max-width:260px;word-break:break-word">
                         <span x-show="row.label.startsWith('[EXTRA]')" class="badge bg-warning text-dark me-1" style="font-size:.65rem">EXTRA</span>
-                        <span x-text="row.source_display.replace(' ← extra (not in source)','')"></span>
+                        <span x-text="cmpTab==='ssids' ? row.label.replace('[EXTRA] ','') : row.source_display.replace(' ← extra (not in source)','')"></span>
                       </td>
                       <!-- Source column: ✓ if it's a source rule, — if it's extra on a target -->
                       <td class="text-center small" :class="row.label.startsWith('[EXTRA]') ? 'compare-na' : 'compare-match'">

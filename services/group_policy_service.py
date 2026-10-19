@@ -12,6 +12,15 @@ from meraki_client.client_v1 import MerakiVpnClientV1
 
 ConflictMode = Literal["skip", "overwrite"]
 PLAN_TTL = timedelta(minutes=30)
+_RESET_VALUES = {
+    "bandwidth": {"settings": "network default"},
+    "firewallAndTrafficShaping": {"settings": "network default"},
+    "scheduling": {"enabled": False},
+    "vlanTagging": {"settings": "network default"},
+    "splashAuthSettings": "network default",
+    "contentFiltering": {"settings": "network default"},
+    "bonjourForwarding": {"enabled": False},
+}
 
 
 def _name_key(policy: dict[str, Any]) -> str:
@@ -21,9 +30,17 @@ def _name_key(policy: dict[str, Any]) -> str:
 def _payload(policy: dict[str, Any]) -> dict[str, Any]:
     writable = {
         "name", "bandwidth", "firewallAndTrafficShaping", "scheduling", "vlanTagging",
-        "splashAuthSettings", "contentFiltering",
+        "splashAuthSettings", "contentFiltering", "bonjourForwarding",
     }
     return {key: value for key, value in policy.items() if key in writable}
+
+
+def _replacement_payload(policy: dict[str, Any]) -> dict[str, Any]:
+    """Make Meraki reset settings not explicitly configured on the source."""
+    payload = _payload(policy)
+    for setting, reset_value in _RESET_VALUES.items():
+        payload.setdefault(setting, reset_value)
+    return payload
 
 
 def _fingerprint(policy: dict[str, Any]) -> str:
@@ -80,7 +97,7 @@ class GroupPolicyCopyService:
             by_name = {_name_key(policy): policy for policy in existing}
             for policy in selected:
                 current = by_name.get(_name_key(policy))
-                action = "create"
+                action = "missing"
                 changed_fields: list[str] = []
                 if current:
                     changed_fields = _changed_fields(current, policy)
@@ -93,10 +110,10 @@ class GroupPolicyCopyService:
                 items.append({
                     "network_id": destination_id,
                     "network_name": destination["name"],
-                    "source_policy": _payload(policy),
+                    "source_policy": _replacement_payload(policy),
                     "source_policy_id": policy["groupPolicyId"],
                     "destination_policy_id": current.get("groupPolicyId") if current else None,
-                    "destination_before": _payload(current) if current else None,
+                    "destination_before": _replacement_payload(current) if current else None,
                     "destination_fingerprint": _fingerprint(current) if current else None,
                     "action": action,
                     "changed_fields": changed_fields,
@@ -118,27 +135,51 @@ class GroupPolicyCopyService:
         operation = {"operation_id": secrets.token_urlsafe(24), "changes": [], "results": []}
         for item in plan["items"]:
             action = item["action"]
-            result = {"network_id": item["network_id"], "network_name": item["network_name"], "policy_name": item["source_policy"]["name"], "action": action, "success": True, "error": ""}
+            result = {
+                "network_id": item["network_id"],
+                "network_name": item["network_name"],
+                "policy_name": item["source_policy"]["name"],
+                "action": action,
+                "success": action in {"missing", "overwrite", "unchanged"},
+                "detail": (
+                    "No destination policy existed; created from source."
+                    if action == "missing"
+                    else "Destination settings already match source."
+                    if action == "unchanged"
+                    else "Skipped because destination policy differs; select Overwrite to replace it."
+                    if action == "conflict"
+                    else ""
+                ),
+                "changed_fields": item["changed_fields"],
+                "applied_fields": [],
+                "error": "",
+            }
             try:
                 current = next((policy for policy in self.client.get_group_policies(item["network_id"])
                                 if _name_key(policy) == _name_key(item["source_policy"])), None)
                 current_fp = _fingerprint(current) if current else None
                 if current_fp != item["destination_fingerprint"]:
                     result.update(action="blocked_by_drift", success=False, error="Destination policy changed after dry run.")
-                elif action == "create":
+                elif action == "missing":
                     created = self.client.create_group_policy(item["network_id"], item["source_policy"])
                     actual = _policy_by_id(self.client, item["network_id"], created["groupPolicyId"])
                     if not actual:
                         raise RuntimeError("Created policy could not be verified.")
+                    if _fingerprint(actual) != _fingerprint(item["source_policy"]):
+                        raise RuntimeError("Meraki returned a policy that does not match the source settings.")
+                    result["applied_fields"] = sorted(_payload(item["source_policy"]))
                     operation["changes"].append({"kind": "created", "network_id": item["network_id"], "group_policy_id": created["groupPolicyId"], "after_fingerprint": _fingerprint(actual)})
                 elif action == "overwrite":
                     self.client.update_group_policy(item["network_id"], item["destination_policy_id"], item["source_policy"])
                     actual = _policy_by_id(self.client, item["network_id"], item["destination_policy_id"])
                     if not actual:
                         raise RuntimeError("Updated policy could not be verified.")
+                    if _fingerprint(actual) != _fingerprint(item["source_policy"]):
+                        raise RuntimeError("Meraki returned a policy that does not match the source settings.")
+                    result["applied_fields"] = item["changed_fields"]
                     operation["changes"].append({"kind": "overwritten", "network_id": item["network_id"], "group_policy_id": item["destination_policy_id"], "before": item["destination_before"], "after_fingerprint": _fingerprint(actual)})
-            except Exception:
-                result.update(success=False, action="failed", error="Meraki could not apply this policy.")
+            except Exception as exc:
+                result.update(success=False, action="failed", error=str(exc))
             operation["results"].append(result)
         return operation
 

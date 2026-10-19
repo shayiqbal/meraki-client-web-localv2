@@ -44,7 +44,7 @@ def _ruleset_dict(rs: RuleSet) -> dict:
 def get_exclusions(
     org_id: str = Query(...),
     network_id: str = Query(...),
-    session=Depends(require_csrf),
+    session=Depends(require_session),
 ) -> dict:
     try:
         return _ruleset_dict(make_client(session).get_rules(org_id, network_id))
