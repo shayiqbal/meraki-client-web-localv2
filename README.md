@@ -2,6 +2,8 @@
 
 A browser-based management tool for Cisco Meraki MX networks. Run it locally or in Docker — no cloud account required.
 
+> **Independent Tool Notice:** This tool was developed independently and is not an official Cisco or Cisco Meraki product. It is not affiliated with, endorsed by, or supported by Cisco or Cisco Meraki. Cisco and Meraki are trademarks of Cisco Systems, Inc.
+
 ---
 
 ## Features
