@@ -139,9 +139,9 @@ def test_login_surfaces_invalid_key_and_timeout_errors(monkeypatch):
     assert "15 seconds" in timeout.json()["detail"]
 
 
-def test_build_52_is_visible_on_login_page():
+def test_independent_tool_notice_is_visible_on_login_page():
     client = TestClient(app)
     response = client.get("/")
     assert response.status_code == 200
     assert "Meraki Config Manager V2" in response.text
-    assert "Build 52" in response.text
+    assert "Independent Tool Notice" in response.text
