@@ -18,7 +18,8 @@ function app() {
       grouppolicies: 'Group Policies',
        compare: 'Compare Networks', newnet: 'New Network',
        deviceaddr: 'Device Addresses',
-       syslog: 'Syslog Servers',
+        syslog: 'Syslog Servers',
+        syslogcopy: 'Copy Syslog',
        activity: 'Activity Log',
     },
     pageOverviews: {
@@ -30,7 +31,8 @@ function app() {
       compare: 'Compare VPN rules, SSIDs, and appliance settings across networks to identify differences.',
       newnet: 'Create an MX network from a template and choose which configuration areas to copy.',
        deviceaddr: 'Bulk-update device site addresses and Dashboard map markers within a network.',
-       syslog: 'Define syslog destinations and apply them to all or selected organization networks.',
+        syslog: 'Define syslog destinations and apply them to all or selected organization networks.',
+        syslogcopy: 'Replace destination syslog configurations with a selected source network configuration.',
        activity: 'Review actions and results recorded during the current browser session.',
     },
 
@@ -141,7 +143,8 @@ function app() {
     // ── Syslog Servers ────────────────────────────────────────────────────────
     slStep: 1, slNetworks: [], slNetworksLoading: false, slNetworkSearch: '',
     slSelectedNetworkIds: [], slServers: [{ host: '', port: 514, roles: [] }],
-    slRoles: [], slMode: 'replace', slPreview: null, slLoading: false, slResults: null,
+    slRoles: [], slRolesByNetwork: {}, slMode: 'replace', slPreview: null, slLoading: false, slResults: null,
+    slCopyStep: 1, slCopyNetworks: [], slCopySource: null, slCopyDestinationIds: [], slCopySearch: '', slCopyPreview: null, slCopyResults: null, slCopyLoading: false,
 
     // ── Activity Log ──────────────────────────────────────────────────────────
     actLog: [],
@@ -318,18 +321,18 @@ function app() {
     resetSyslogState() {
       this.slStep = 1; this.slNetworks = []; this.slNetworkSearch = '';
       this.slSelectedNetworkIds = []; this.slServers = [{ host: '', port: 514, roles: [] }];
-      this.slRoles = []; this.slMode = 'replace'; this.slPreview = null; this.slLoading = false; this.slResults = null;
+      this.slRoles = []; this.slRolesByNetwork = {}; this.slMode = 'replace'; this.slPreview = null; this.slLoading = false; this.slResults = null;
     },
     async startSyslogWizard() {
       this.resetSyslogState(); this.page = 'syslog';
       if (!this.selectedOrgId) return;
       this.slNetworksLoading = true;
       try {
-        const [networks, roles] = await Promise.all([
+        const [networks, roleCatalog] = await Promise.all([
           this.api('GET', `/api/syslog/networks?org_id=${this.selectedOrgId}`),
           this.api('GET', `/api/syslog/roles?org_id=${this.selectedOrgId}`),
         ]);
-        this.slNetworks = networks; this.slRoles = roles;
+        this.slNetworks = networks; this.slRoles = roleCatalog.roles || []; this.slRolesByNetwork = roleCatalog.by_network || {};
         this.log(`Loaded ${networks.length} network(s) for syslog configuration.`, 'info');
       } catch (e) { this.log(`Failed to load syslog setup: ${e.message}`, 'error'); }
       finally { this.slNetworksLoading = false; }
@@ -339,7 +342,15 @@ function app() {
       return this.slNetworks.filter(n => !q || [n.name, ...(n.tags || [])].join(' ').toLowerCase().includes(q));
     },
     get slSelectedNetworks() { return this.slNetworks.filter(n => this.slSelectedNetworkIds.includes(n.id)); },
-    slToggleNetwork(id) { const i = this.slSelectedNetworkIds.indexOf(id); if (i >= 0) this.slSelectedNetworkIds.splice(i, 1); else this.slSelectedNetworkIds.push(id); this.slPreview = null; },
+    get slAvailableRoles() {
+      if (!this.slSelectedNetworkIds.length) return this.slRoles;
+      return this.slRoles.filter(role => this.slSelectedNetworkIds.every(id => (this.slRolesByNetwork[id] || []).includes(role.value)));
+    },
+    slRestrictRoles() {
+      const allowed = new Set(this.slAvailableRoles.map(role => role.value));
+      this.slServers.forEach(server => { server.roles = server.roles.filter(role => allowed.has(role)); });
+    },
+    slToggleNetwork(id) { const i = this.slSelectedNetworkIds.indexOf(id); if (i >= 0) this.slSelectedNetworkIds.splice(i, 1); else this.slSelectedNetworkIds.push(id); this.slRestrictRoles(); this.slPreview = null; },
     slSelectAll() { this.slSelectedNetworkIds = [...new Set([...this.slSelectedNetworkIds, ...this.slFilteredNetworks.map(n => n.id)])]; this.slPreview = null; },
     slDeselectAll() { const visible = new Set(this.slFilteredNetworks.map(n => n.id)); this.slSelectedNetworkIds = this.slSelectedNetworkIds.filter(id => !visible.has(id)); this.slPreview = null; },
     slAddServer() { this.slServers.push({ host: '', port: 514, roles: [] }); this.slPreview = null; },
@@ -367,6 +378,33 @@ function app() {
       finally { this.slLoading = false; }
     },
     slServerLabel(server) { return `${server.host}:${server.port} — ${(server.roles || []).join(', ')}`; },
+    async startSyslogCopy() {
+      this.page = 'syslogcopy'; this.slCopyStep = 1; this.slCopySource = null; this.slCopyDestinationIds = []; this.slCopySearch = ''; this.slCopyPreview = null; this.slCopyResults = null;
+      // Reuse the organization networks already loaded at sign-in. This avoids
+      // a redundant Meraki request when opening the copy wizard.
+      if (!this.networks.length && this.selectedOrgId) await this.loadNetworks();
+      this.slCopyNetworks = [...this.networks];
+    },
+    get slCopyFilteredNetworks() { const q = this.slCopySearch.toLowerCase(); return this.slCopyNetworks.filter(n => !q || [n.name, ...(n.tags || [])].join(' ').toLowerCase().includes(q)); },
+    get slCopyDestinations() { return this.slCopyNetworks.filter(n => this.slCopyDestinationIds.includes(n.id) && n.id !== this.slCopySource?.id); },
+    slCopyToggleDestination(id) { const i = this.slCopyDestinationIds.indexOf(id); if (i >= 0) this.slCopyDestinationIds.splice(i, 1); else this.slCopyDestinationIds.push(id); this.slCopyPreview = null; },
+    slCopySelectAllVisible() { this.slCopyDestinationIds = [...new Set([...this.slCopyDestinationIds, ...this.slCopyFilteredNetworks.filter(n => n.id !== this.slCopySource?.id).map(n => n.id)])]; this.slCopyPreview = null; },
+    slCopyDeselectAllVisible() { const visible = new Set(this.slCopyFilteredNetworks.map(n => n.id)); this.slCopyDestinationIds = this.slCopyDestinationIds.filter(id => !visible.has(id)); this.slCopyPreview = null; },
+    async slCopyRunPreview() {
+      if (!this.slCopySource || !this.slCopyDestinations.length) return;
+      this.slCopyLoading = true;
+      try { this.slCopyPreview = await this.api('POST', '/api/syslog/copy/preview', { org_id: this.selectedOrgId, source: this.slCopySource, destinations: this.slCopyDestinations }); this.slCopyStep = 3; }
+      catch (e) { this.log(`Syslog copy preview failed: ${e.message}`, 'error'); }
+      finally { this.slCopyLoading = false; }
+    },
+    async slCopyExecute() {
+      const updates = (this.slCopyPreview || []).filter(p => p.status === 'update').length;
+      if (!updates || !confirm(`Replace syslog configuration on ${updates} compatible network(s) with ${this.slCopySource.name}?`)) return;
+      this.slCopyLoading = true;
+      try { this.slCopyResults = await this.api('POST', '/api/syslog/copy/execute', { org_id: this.selectedOrgId, source: this.slCopySource, destinations: this.slCopyDestinations }); this.slCopyStep = 4; }
+      catch (e) { this.log(`Syslog copy failed: ${e.message}`, 'error'); }
+      finally { this.slCopyLoading = false; }
+    },
 
     get gpDestNetworks() {
       return this.networks.filter(n =>
@@ -383,19 +421,16 @@ function app() {
     // =========================================================================
     async loadDashboard() {
       this.dashLoading = true;
-      this.dashStats = { networkCount: this.networks.length, exclusionCount: '…', orgName: this.selectedOrg()?.name || '' };
-      try {
-        let total = 0;
-        await Promise.all(this.networks.map(async n => {
-          try {
-            const rs = await this.api('GET', `/api/exclusions?org_id=${this.selectedOrgId}&network_id=${n.id}`);
-            total += rs.rules.length;
-          } catch {}
-        }));
-        this.dashStats.exclusionCount = total;
-      } finally {
-        this.dashLoading = false;
-      }
+      // Fetching exclusions for every network at login creates a large burst of
+      // Meraki API calls. For large organizations that triggers rate limiting
+      // and delays every other tool, including Syslog Servers. VPN rule counts
+      // remain available when a user opens an individual network.
+      this.dashStats = {
+        networkCount: this.networks.length,
+        exclusionCount: 'Open a network to view',
+        orgName: this.selectedOrg()?.name || '',
+      };
+      this.dashLoading = false;
     },
 
     // =========================================================================

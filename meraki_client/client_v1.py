@@ -237,16 +237,39 @@ class MerakiVpnClientV1(MerakiVpnClient):
 
     # ── Network syslog servers ─────────────────────────────────────────────
 
+    # The organization roles endpoint returns current camel-case enum values,
+    # while the (deprecated but still write-capable) per-network endpoint
+    # accepts the corresponding legacy labels.
+    _SYSLOG_ROLE_LABELS = {
+        "wirelessEventLog": "Wireless event log",
+        "applianceEventLog": "Appliance event log",
+        "switchEventLog": "Switch event log",
+        "airMarshalEvents": "Air Marshal events",
+        "flows": "Flows",
+        "urls": "URLs",
+        "idsAlerts": "IDS alerts",
+        "securityEvents": "Security events",
+        "applianceIpfilter": "Appliance IP filter",
+        "switchIpfilter": "Switch IP filter",
+    }
+
     def get_network_syslog_servers(self, network_id: str) -> dict[str, Any]:
-        """Return a network's configuration from Meraki's current syslog API."""
-        return self._syslog_request("GET", f"/networks/{network_id}/devices/syslog/servers")
+        """Return a network's configuration from Meraki's syslog API."""
+        return self._syslog_request("GET", f"/networks/{network_id}/syslogServers")
 
     def update_network_syslog_servers(
         self, network_id: str, servers: list[dict[str, Any]]
     ) -> dict[str, Any]:
         """Replace a network's complete syslog server list."""
+        legacy_servers = [
+            {
+                **server,
+                "roles": [self._SYSLOG_ROLE_LABELS.get(role, role) for role in server.get("roles", [])],
+            }
+            for server in servers
+        ]
         return self._syslog_request(
-            "PUT", f"/networks/{network_id}/devices/syslog/servers", {"servers": servers}
+            "PUT", f"/networks/{network_id}/syslogServers", {"servers": legacy_servers}
         )
 
     def get_organization_syslog_roles(self, organization_id: str) -> Any:

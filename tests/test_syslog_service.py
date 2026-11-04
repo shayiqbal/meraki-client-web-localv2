@@ -6,6 +6,8 @@ from services.syslog_service import SyslogService, merge_servers, normalize_serv
 
 
 class FakeClient:
+    _SYSLOG_ROLE_LABELS = {"applianceEventLog": "Appliance event log"}
+
     def __init__(self) -> None:
         self.settings = {
             "one": [{"host": "old.example", "port": 514, "roles": ["Flows"]}],
@@ -58,6 +60,31 @@ class SyslogServiceTests(unittest.TestCase):
         )
         self.assertEqual([result.success for result in results], [True, True, False])
         self.assertEqual(len(self.client.updated), 2)
+
+    def test_list_roles_excludes_roles_unsupported_by_network_write_api(self) -> None:
+        self.client.get_organization_syslog_roles = lambda _org: {"items": [{
+            "available": [
+                {"value": "applianceEventLog", "name": "Appliance Event Log"},
+                {"value": "applianceIpfilter", "name": "Appliance IP Filter"},
+            ]
+        }]}  # type: ignore[attr-defined]
+
+        self.assertEqual(self.service.list_roles("org"), {
+            "roles": [{"value": "applianceEventLog", "label": "Appliance Event Log"}],
+            "by_network": {},
+            "labels_by_network": {},
+        })
+
+    def test_copy_preview_replaces_only_compatible_destinations(self) -> None:
+        self.client.settings["source"] = [{"host": "log.example", "port": 514, "roles": ["Appliance event log"]}]
+        self.client.get_organization_syslog_roles = lambda _org: {"items": [
+            {"network": {"id": "target"}, "available": [{"value": "applianceEventLog", "name": "Appliance Event Log"}]},
+            {"network": {"id": "incompatible"}, "available": []},
+        ]}  # type: ignore[attr-defined]
+        previews = self.service.copy_preview("org", {"id": "source", "name": "Source"}, [
+            {"id": "target", "name": "Target"}, {"id": "incompatible", "name": "Incompatible"},
+        ])
+        self.assertEqual([item.status for item in previews], ["update", "incompatible"])
 
 
 if __name__ == "__main__":

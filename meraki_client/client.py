@@ -82,7 +82,13 @@ class MerakiVpnClient:
                     "organization. Close other Meraki tools, wait a few minutes, "
                     "then click Load networks once."
                 ) from exc
-            raise MerakiClientError(f"{action} failed") from exc
+            # Preserve the API response for callers.  Features that use newer
+            # endpoints (such as syslog) need the exact Meraki explanation to
+            # distinguish unsupported networks from permission or API errors.
+            detail = str(exc).strip()
+            raise MerakiClientError(
+                f"{action} failed" + (f": {detail}" if detail else "")
+            ) from exc
 
     def organizations(self) -> list[dict[str, Any]]:
         return self._call(

@@ -102,16 +102,36 @@ class SyslogService:
         networks = self.client.all_networks(organization_id)
         return sorted(networks, key=lambda network: (network.get("name") or "").casefold())
 
-    def list_roles(self, organization_id: str) -> list[dict[str, str]]:
-        """Return the union of current API-supported role values and labels."""
+    def list_roles(self, organization_id: str) -> dict[str, Any]:
+        """Return supported roles plus their network-specific availability."""
         response = self.client.get_organization_syslog_roles(organization_id)
         items = response.get("items", response) if isinstance(response, dict) else response
         roles: dict[str, str] = {}
+        by_network: dict[str, list[str]] = {}
+        labels_by_network: dict[str, list[str]] = {}
+        supported = self.client._SYSLOG_ROLE_LABELS
         for item in items or []:
+            network_id = str((item.get("network") or {}).get("id") or "")
+            available: list[str] = []
+            available_labels: list[str] = []
             for role in item.get("available", []) or []:
-                if isinstance(role, dict) and role.get("value"):
-                    roles[str(role["value"])] = str(role.get("name") or role["value"])
-        return [{"value": value, "label": label} for value, label in sorted(roles.items(), key=lambda item: item[1].casefold())]
+                if isinstance(role, dict) and role.get("name"):
+                    available_labels.append(str(role["name"]))
+                # The per-network write endpoint accepts only these legacy
+                # roles.  The discovery endpoint may also advertise newer
+                # IP-filter roles, which would make the complete update fail.
+                if isinstance(role, dict) and role.get("value") in supported:
+                    value = str(role["value"])
+                    roles[value] = str(role.get("name") or value)
+                    available.append(value)
+            if network_id:
+                by_network[network_id] = available
+                labels_by_network[network_id] = available_labels
+        return {
+            "roles": [{"value": value, "label": label} for value, label in sorted(roles.items(), key=lambda item: item[1].casefold())],
+            "by_network": by_network,
+            "labels_by_network": labels_by_network,
+        }
 
     def preview(
         self,
@@ -157,6 +177,57 @@ class SyslogService:
                 continue
             if preview.status == "unchanged":
                 results.append(SyslogResult(preview.network_id, preview.network_name, True, "unchanged", len(preview.current_servers)))
+                continue
+            try:
+                response = self.client.update_network_syslog_servers(preview.network_id, preview.proposed_servers) or {}
+                final = clean_servers(response.get("servers", preview.proposed_servers))
+                results.append(SyslogResult(preview.network_id, preview.network_name, True, "updated", len(final)))
+            except Exception as exc:
+                results.append(SyslogResult(preview.network_id, preview.network_name, False, "failed", error=str(exc)))
+        return results
+
+    def copy_preview(
+        self, organization_id: str, source: dict[str, Any], destinations: list[dict[str, Any]],
+    ) -> list[SyslogPreview]:
+        source_id = source.get("id", "")
+        if not source_id:
+            raise ValueError("Select a source network.")
+        source_name = source.get("name") or source_id
+        source_servers = clean_servers((self.client.get_network_syslog_servers(source_id) or {}).get("servers"))
+        if not source_servers:
+            raise ValueError(f"{source_name} has no syslog servers to copy.")
+
+        role_catalog = self.list_roles(organization_id)["labels_by_network"]
+        source_roles = {str(role).casefold() for server in source_servers for role in server.get("roles", [])}
+        previews: list[SyslogPreview] = []
+        for destination in destinations:
+            network_id = destination.get("id", "")
+            name = destination.get("name") or network_id or "(unnamed network)"
+            if not network_id or network_id == source_id:
+                previews.append(SyslogPreview(network_id, name, "invalid", "Source cannot be a destination.", [], []))
+                continue
+            allowed = {role.casefold() for role in role_catalog.get(network_id, [])}
+            unsupported = sorted(source_roles - allowed)
+            if unsupported:
+                previews.append(SyslogPreview(network_id, name, "incompatible", f"Target does not support: {', '.join(unsupported)}.", [], source_servers))
+                continue
+            try:
+                current = clean_servers((self.client.get_network_syslog_servers(network_id) or {}).get("servers"))
+                status = "unchanged" if current == source_servers else "update"
+                detail = "Already matches the source." if status == "unchanged" else f"Will replace all syslog servers with {source_name}."
+                previews.append(SyslogPreview(network_id, name, status, detail, current, source_servers))
+            except Exception as exc:
+                previews.append(SyslogPreview(network_id, name, "unavailable", str(exc), [], source_servers))
+        return previews
+
+    def copy_execute(
+        self, organization_id: str, source: dict[str, Any], destinations: list[dict[str, Any]],
+    ) -> list[SyslogResult]:
+        previews = self.copy_preview(organization_id, source, destinations)
+        results: list[SyslogResult] = []
+        for preview in previews:
+            if preview.status != "update":
+                results.append(SyslogResult(preview.network_id, preview.network_name, preview.status == "unchanged", preview.status, len(preview.current_servers), "" if preview.status == "unchanged" else preview.detail))
                 continue
             try:
                 response = self.client.update_network_syslog_servers(preview.network_id, preview.proposed_servers) or {}
