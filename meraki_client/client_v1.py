@@ -3,6 +3,8 @@ from __future__ import annotations
 
 from typing import Any
 
+import requests
+
 from meraki_client.client import MerakiVpnClient
 from meraki_client.exceptions import MerakiClientError
 
@@ -232,6 +234,39 @@ class MerakiVpnClientV1(MerakiVpnClient):
             "update appliance settings",
             network_id=network_id,
         )
+
+    # ── Network syslog servers ─────────────────────────────────────────────
+
+    def get_network_syslog_servers(self, network_id: str) -> dict[str, Any]:
+        """Return a network's configuration from Meraki's current syslog API."""
+        return self._syslog_request("GET", f"/networks/{network_id}/devices/syslog/servers")
+
+    def update_network_syslog_servers(
+        self, network_id: str, servers: list[dict[str, Any]]
+    ) -> dict[str, Any]:
+        """Replace a network's complete syslog server list."""
+        return self._syslog_request(
+            "PUT", f"/networks/{network_id}/devices/syslog/servers", {"servers": servers}
+        )
+
+    def get_organization_syslog_roles(self, organization_id: str) -> Any:
+        return self._syslog_request(
+            "GET", f"/organizations/{organization_id}/devices/syslog/servers/roles/byNetwork?perPage=1000"
+        )
+
+    def _syslog_request(self, method: str, path: str, payload: dict[str, Any] | None = None) -> dict[str, Any]:
+        """Call the current syslog endpoint not yet exposed by the pinned SDK."""
+        headers = {"Authorization": f"Bearer {self.settings.api_key}", "X-Cisco-Meraki-API-Key": self.settings.api_key, "Content-Type": "application/json"}
+
+        def _do() -> dict[str, Any]:
+            response = requests.request(method, f"https://api.meraki.com/api/v1{path}", json=payload, headers=headers, timeout=30)
+            if response.status_code == 429:
+                raise MerakiClientError("Rate-limited by Meraki. Retrying…")
+            if not response.ok:
+                raise MerakiClientError(f"syslog request failed: HTTP {response.status_code} — {response.text[:200]}")
+            return response.json()
+
+        return self._call(_do, f"{method.lower()} syslog servers", path=path)
 
     # ── Group policies ─────────────────────────────────────────────────────────
 

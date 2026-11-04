@@ -17,6 +17,7 @@ A browser-based management tool for Cisco Meraki MX networks. Run it locally or 
 | **Group Policies** | Server-side dry run, safe skip or full overwrite, drift protection, and session-only rollback |
 | **Compare Networks** | Side-by-side diff of VPN rules, SSIDs, and appliance settings |
 | **New Network Wizard** | Create a new network cloned from a template in 6 guided steps |
+| **Syslog Servers** | Preview and bulk-configure multiple syslog destinations across all or selected networks |
 | **Activity Log** | Timestamped log of every action taken during your session |
 
 ---

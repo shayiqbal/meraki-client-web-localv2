@@ -16,9 +16,10 @@ function app() {
       dashboard: 'Dashboard', networks: 'Networks',
       exclusions: 'VPN Exclusions', copy: 'Copy Rules',
       grouppolicies: 'Group Policies',
-      compare: 'Compare Networks', newnet: 'New Network',
-      deviceaddr: 'Device Addresses',
-      activity: 'Activity Log',
+       compare: 'Compare Networks', newnet: 'New Network',
+       deviceaddr: 'Device Addresses',
+       syslog: 'Syslog Servers',
+       activity: 'Activity Log',
     },
     pageOverviews: {
       dashboard: 'Summary of the selected organization’s MX networks and VPN exclusion rules, with shortcuts to common tasks.',
@@ -28,8 +29,9 @@ function app() {
       grouppolicies: 'Copy selected group policies from a source network to destination networks.',
       compare: 'Compare VPN rules, SSIDs, and appliance settings across networks to identify differences.',
       newnet: 'Create an MX network from a template and choose which configuration areas to copy.',
-      deviceaddr: 'Bulk-update device site addresses and Dashboard map markers within a network.',
-      activity: 'Review actions and results recorded during the current browser session.',
+       deviceaddr: 'Bulk-update device site addresses and Dashboard map markers within a network.',
+       syslog: 'Define syslog destinations and apply them to all or selected organization networks.',
+       activity: 'Review actions and results recorded during the current browser session.',
     },
 
     // ── Org / Network state ───────────────────────────────────────────────────
@@ -136,6 +138,11 @@ function app() {
     daTotal: 0,
     daCurrentLabel: '',
 
+    // ── Syslog Servers ────────────────────────────────────────────────────────
+    slStep: 1, slNetworks: [], slNetworksLoading: false, slNetworkSearch: '',
+    slSelectedNetworkIds: [], slServers: [{ host: '', port: 514, roles: [] }],
+    slRoles: [], slMode: 'replace', slPreview: null, slLoading: false, slResults: null,
+
     // ── Activity Log ──────────────────────────────────────────────────────────
     actLog: [],
 
@@ -207,8 +214,9 @@ function app() {
       this.gpOverwriteAcknowledged = false; this.gpRollbackResults = null;
       this.cmpSource = null; this.cmpTargetIds = []; this.cmpReport = null;
       this.nnStep = 1; this.nnTemplate = null; this.nnCloneConfig = null; this.nnResult = null;
-      this.resetDeviceAddrState(); this.daAllNetworks = [];
-      this.actLog = [];
+       this.resetDeviceAddrState(); this.daAllNetworks = [];
+       this.resetSyslogState();
+       this.actLog = [];
     },
 
     // =========================================================================
@@ -238,8 +246,9 @@ function app() {
       this.gpSelectedPolicyIdxs = []; this.gpDestNetworkIds = [];
       this.cmpSource = null; this.cmpTargetIds = []; this.cmpReport = null;
       this.nnStep = 1; this.nnTemplate = null; this.nnCloneConfig = null;
-      this.resetDeviceAddrState(); this.daAllNetworks = [];
-      await this.loadNetworks();
+       this.resetDeviceAddrState(); this.daAllNetworks = [];
+       this.resetSyslogState();
+       await this.loadNetworks();
       this.loadDashboard(); // fire without await — updates stats in background
     },
 
@@ -302,6 +311,62 @@ function app() {
     get gpSelectedPolicies() {
       return this.gpSelectedPolicyIdxs.map(i => this.gpSourcePolicies[i]).filter(Boolean);
     },
+
+    // =========================================================================
+    // Syslog Servers
+    // =========================================================================
+    resetSyslogState() {
+      this.slStep = 1; this.slNetworks = []; this.slNetworkSearch = '';
+      this.slSelectedNetworkIds = []; this.slServers = [{ host: '', port: 514, roles: [] }];
+      this.slRoles = []; this.slMode = 'replace'; this.slPreview = null; this.slLoading = false; this.slResults = null;
+    },
+    async startSyslogWizard() {
+      this.resetSyslogState(); this.page = 'syslog';
+      if (!this.selectedOrgId) return;
+      this.slNetworksLoading = true;
+      try {
+        const [networks, roles] = await Promise.all([
+          this.api('GET', `/api/syslog/networks?org_id=${this.selectedOrgId}`),
+          this.api('GET', `/api/syslog/roles?org_id=${this.selectedOrgId}`),
+        ]);
+        this.slNetworks = networks; this.slRoles = roles;
+        this.log(`Loaded ${networks.length} network(s) for syslog configuration.`, 'info');
+      } catch (e) { this.log(`Failed to load syslog setup: ${e.message}`, 'error'); }
+      finally { this.slNetworksLoading = false; }
+    },
+    get slFilteredNetworks() {
+      const q = this.slNetworkSearch.toLowerCase();
+      return this.slNetworks.filter(n => !q || [n.name, ...(n.tags || [])].join(' ').toLowerCase().includes(q));
+    },
+    get slSelectedNetworks() { return this.slNetworks.filter(n => this.slSelectedNetworkIds.includes(n.id)); },
+    slToggleNetwork(id) { const i = this.slSelectedNetworkIds.indexOf(id); if (i >= 0) this.slSelectedNetworkIds.splice(i, 1); else this.slSelectedNetworkIds.push(id); this.slPreview = null; },
+    slSelectAll() { this.slSelectedNetworkIds = [...new Set([...this.slSelectedNetworkIds, ...this.slFilteredNetworks.map(n => n.id)])]; this.slPreview = null; },
+    slDeselectAll() { const visible = new Set(this.slFilteredNetworks.map(n => n.id)); this.slSelectedNetworkIds = this.slSelectedNetworkIds.filter(id => !visible.has(id)); this.slPreview = null; },
+    slAddServer() { this.slServers.push({ host: '', port: 514, roles: [] }); this.slPreview = null; },
+    slRemoveServer(index) { if (this.slServers.length > 1) this.slServers.splice(index, 1); this.slPreview = null; },
+    slInvalidatePreview() { this.slPreview = null; },
+    async slRunPreview() {
+      if (!this.slSelectedNetworks.length) return;
+      this.slLoading = true;
+      try { this.slPreview = await this.api('POST', '/api/syslog/preview', { networks: this.slSelectedNetworks, servers: this.slServers, mode: this.slMode }); this.slStep = 3; }
+      catch (e) { this.log(`Syslog preview failed: ${e.message}`, 'error'); }
+      finally { this.slLoading = false; }
+    },
+    async slExecute() {
+      if (!this.slPreview || this.slLoading) return;
+      const updates = this.slPreview.filter(p => p.status === 'update').length;
+      if (!confirm(`Apply the syslog configuration to ${this.slSelectedNetworks.length} network(s)?\n\nMode: ${this.slMode === 'replace' ? 'Replace all existing servers' : 'Add or update entered servers'}\n${updates} network(s) will be changed.`)) return;
+      this.slLoading = true;
+      try {
+        this.slResults = await this.api('POST', '/api/syslog/execute', { networks: this.slSelectedNetworks, servers: this.slServers, mode: this.slMode });
+        this.slStep = 4;
+        const updated = this.slResults.filter(r => r.status === 'updated').length;
+        const failed = this.slResults.filter(r => !r.success).length;
+        this.log(`Syslog update complete: ${updated} updated, ${failed} failed.`, failed ? 'warning' : 'success');
+      } catch (e) { this.log(`Syslog update failed: ${e.message}`, 'error'); }
+      finally { this.slLoading = false; }
+    },
+    slServerLabel(server) { return `${server.host}:${server.port} — ${(server.roles || []).join(', ')}`; },
 
     get gpDestNetworks() {
       return this.networks.filter(n =>

@@ -64,9 +64,12 @@
       <div class="nav-item" :class="{active: page==='newnet'}" @click="startNewNet()">
         <i class="bi bi-plus-circle"></i> New Network
       </div>
-      <div class="nav-item" :class="{active: page==='deviceaddr'}" @click="startDeviceAddrWizard()">
-        <i class="bi bi-geo-alt"></i> Device Addresses
-      </div>
+       <div class="nav-item" :class="{active: page==='deviceaddr'}" @click="startDeviceAddrWizard()">
+         <i class="bi bi-geo-alt"></i> Device Addresses
+       </div>
+       <div class="nav-item" :class="{active: page==='syslog'}" @click="startSyslogWizard()">
+         <i class="bi bi-broadcast-pin"></i> Syslog Servers
+       </div>
       <div class="nav-item" :class="{active: page==='activity'}" @click="navigate('activity')">
         <i class="bi bi-journal-text"></i> Activity Log
         <span x-show="actLog.length" class="badge bg-secondary ms-auto" x-text="actLog.length"></span>
@@ -163,8 +166,9 @@
             <button class="btn btn-outline-primary" @click="startCopyWizard()"><i class="bi bi-copy me-1"></i>Copy Rules</button>
             <button class="btn btn-outline-primary" @click="startGpWizard()"><i class="bi bi-people me-1"></i>Group Policies</button>
             <button class="btn btn-outline-primary" @click="startCompare()"><i class="bi bi-arrow-left-right me-1"></i>Compare Networks</button>
-            <button class="btn btn-outline-primary" @click="startNewNet()"><i class="bi bi-plus-circle me-1"></i>New Network</button>
-            <button class="btn btn-outline-secondary" @click="loadDashboard()"><i class="bi bi-arrow-clockwise me-1"></i>Refresh Stats</button>
+             <button class="btn btn-outline-primary" @click="startNewNet()"><i class="bi bi-plus-circle me-1"></i>New Network</button>
+             <button class="btn btn-outline-primary" @click="startSyslogWizard()"><i class="bi bi-broadcast-pin me-1"></i>Syslog Servers</button>
+             <button class="btn btn-outline-secondary" @click="loadDashboard()"><i class="bi bi-arrow-clockwise me-1"></i>Refresh Stats</button>
           </div>
         </div>
 
@@ -956,6 +960,26 @@
             </div>
           </template>
         </div>
+      </div>
+
+      <!-- ════════════════════════ SYSLOG SERVERS ════════════════════════════ -->
+      <div x-show="page==='syslog'">
+        <div class="wizard-steps mb-4"><template x-for="s in [1,2,3,4]" :key="s"><span class="d-flex align-items-center"><span class="step-bubble" :class="slStep>s?'done':slStep===s?'active':'pending'" x-text="slStep>s?'✓':s"></span><span x-show="s<4" class="step-line" :class="slStep>s?'done':''"></span></span></template></div>
+        <div x-show="slStep===1" class="page-card">
+          <div class="d-flex align-items-center justify-content-between gap-2 mb-2"><div class="section-header mb-0">Step 1 — Select Networks</div><span class="badge bg-primary" x-text="`${slSelectedNetworkIds.length} selected`"></span></div>
+          <p class="text-muted small">All network types are listed. Unsupported networks are reported in the preview without interrupting the batch.</p>
+          <div class="d-flex gap-2 mb-2 flex-wrap"><input class="form-control form-control-sm" type="text" x-model="slNetworkSearch" placeholder="Search networks or tags…" style="max-width:320px"/><button class="btn btn-sm btn-outline-secondary" @click="slSelectAll()">Select All Visible</button><button class="btn btn-sm btn-outline-secondary" @click="slDeselectAll()">Deselect All Visible</button></div>
+          <div class="table-wrap" style="max-height:420px;overflow-y:auto"><table class="table table-hover mb-0"><thead><tr><th></th><th>Network</th><th>Tags</th><th>Product Types</th></tr></thead><tbody><template x-if="slNetworksLoading"><tr><td colspan="4" class="text-center py-4"><span class="spinner-border spinner-border-sm me-2"></span>Loading networks…</td></tr></template><template x-if="!slNetworksLoading && !slFilteredNetworks.length"><tr><td colspan="4" class="text-center py-4 text-muted">No networks found.</td></tr></template><template x-for="n in slFilteredNetworks" :key="n.id"><tr class="network-row" @click="slToggleNetwork(n.id)"><td><input type="checkbox" class="form-check-input" :checked="slSelectedNetworkIds.includes(n.id)" readonly/></td><td class="fw-semibold" x-text="n.name"></td><td><template x-for="t in (n.tags||[])" :key="t"><span class="badge bg-light text-secondary me-1" x-text="t"></span></template></td><td class="small text-muted" x-text="(n.productTypes||[]).join(', ') || '—'"></td></tr></template></tbody></table></div>
+          <div class="mt-3"><button class="btn btn-primary" @click="slStep=2" :disabled="!slSelectedNetworkIds.length || slNetworksLoading">Next: Configure Servers</button></div>
+        </div>
+        <div x-show="slStep===2" class="page-card">
+          <div class="section-header">Step 2 — Define Syslog Servers</div><p class="text-muted small">Replace all makes selected networks exactly match this list. Add or update retains existing destinations and combines roles for matching host/port pairs.</p>
+          <div class="mb-3"><label class="form-label fw-semibold me-3">Update mode</label><div class="form-check form-check-inline"><input class="form-check-input" type="radio" value="replace" x-model="slMode" @change="slInvalidatePreview()" id="sl-replace"/><label class="form-check-label" for="sl-replace">Replace all existing servers</label></div><div class="form-check form-check-inline"><input class="form-check-input" type="radio" value="merge" x-model="slMode" @change="slInvalidatePreview()" id="sl-merge"/><label class="form-check-label" for="sl-merge">Add or update entered servers</label></div></div>
+          <template x-for="(server, index) in slServers" :key="index"><div class="border rounded p-3 mb-3 bg-light"><div class="d-flex justify-content-between align-items-center mb-2"><span class="fw-semibold small" x-text="`Server ${index+1}`"></span><button class="btn btn-sm btn-outline-danger" @click="slRemoveServer(index)" :disabled="slServers.length===1">Remove</button></div><div class="row g-2"><div class="col-md-5"><label class="form-label small">Hostname or IP address</label><input class="form-control form-control-sm" x-model="server.host" @input="slInvalidatePreview()" placeholder="syslog.example.com or 192.0.2.10"/></div><div class="col-md-2"><label class="form-label small">UDP port</label><input class="form-control form-control-sm" type="number" min="1" max="65535" x-model.number="server.port" @input="slInvalidatePreview()"/></div><div class="col-md-5"><label class="form-label small">Event roles *</label><select class="form-select form-select-sm" multiple size="5" x-model="server.roles" @change="slInvalidatePreview()"><template x-for="role in slRoles" :key="role.value"><option :value="role.value" x-text="role.label"></option></template></select><div class="form-text">Use Ctrl/Cmd-click for multiple roles.</div></div></div></div></template>
+          <button class="btn btn-sm btn-outline-primary" @click="slAddServer()">Add Server</button><div class="mt-3 d-flex gap-2"><button class="btn btn-primary" @click="slRunPreview()" :disabled="slLoading">Preview Changes</button><button class="btn btn-outline-secondary" @click="slStep=1">Back</button></div>
+        </div>
+        <div x-show="slStep===3" class="page-card"><div class="section-header">Step 3 — Preview Syslog Changes</div><div class="table-wrap" style="max-height:480px;overflow-y:auto"><table class="table mb-0"><thead><tr><th>Network</th><th>Status</th><th>Current Servers</th><th>Resulting Servers</th><th>Detail</th></tr></thead><tbody><template x-for="p in slPreview" :key="p.network_id"><tr><td class="fw-semibold small" x-text="p.network_name"></td><td><span class="badge" :class="p.status==='update'?'bg-primary':(p.status==='unchanged'?'bg-secondary':'bg-warning text-dark')" x-text="p.status"></span></td><td class="small" x-text="p.current_servers.map(slServerLabel).join('; ') || '—'"></td><td class="small" x-text="p.proposed_servers.map(slServerLabel).join('; ') || '—'"></td><td class="small" x-text="p.detail"></td></tr></template></tbody></table></div><div class="mt-3 d-flex gap-2"><button class="btn btn-success" @click="slExecute()" :disabled="slLoading">Apply Syslog Configuration</button><button class="btn btn-outline-secondary" @click="slStep=2">Back</button></div></div>
+        <div x-show="slStep===4" class="page-card"><div class="section-header">Step 4 — Results</div><div class="table-wrap"><table class="table mb-0"><thead><tr><th>Network</th><th>Result</th><th>Configured Servers</th><th>Error / Detail</th></tr></thead><tbody><template x-for="r in slResults" :key="r.network_id"><tr><td class="fw-semibold" x-text="r.network_name"></td><td><span class="badge" :class="r.success?'bg-success':'bg-danger'" x-text="r.status"></span></td><td x-text="r.server_count"></td><td class="small text-danger" x-text="r.error"></td></tr></template></tbody></table></div><div class="mt-3"><button class="btn btn-outline-primary" @click="startSyslogWizard()">Configure More Networks</button></div></div>
       </div>
 
       <!-- ══════════════════════ DEVICE ADDRESSES ════════════════════════════ -->
