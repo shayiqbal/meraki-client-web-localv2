@@ -144,7 +144,7 @@ function app() {
     slStep: 1, slNetworks: [], slNetworksLoading: false, slNetworkSearch: '',
     slSelectedNetworkIds: [], slServers: [{ host: '', port: 514, roles: [] }],
     slRoles: [], slRolesByNetwork: {}, slMode: 'replace', slPreview: null, slLoading: false, slResults: null,
-    slCopyStep: 1, slCopyNetworks: [], slCopySource: null, slCopyDestinationIds: [], slCopySearch: '', slCopyPreview: null, slCopyResults: null, slCopyLoading: false,
+    slCopyStep: 1, slCopyNetworks: [], slCopySource: null, slCopyDestinationIds: [], slCopySearch: '', slCopyPreview: null, slCopyResults: null, slCopyLoading: false, slCopyAllowPartial: false,
 
     // ── Activity Log ──────────────────────────────────────────────────────────
     actLog: [],
@@ -379,7 +379,7 @@ function app() {
     },
     slServerLabel(server) { return `${server.host}:${server.port} — ${(server.roles || []).join(', ')}`; },
     async startSyslogCopy() {
-      this.page = 'syslogcopy'; this.slCopyStep = 1; this.slCopySource = null; this.slCopyDestinationIds = []; this.slCopySearch = ''; this.slCopyPreview = null; this.slCopyResults = null;
+      this.page = 'syslogcopy'; this.slCopyStep = 1; this.slCopySource = null; this.slCopyDestinationIds = []; this.slCopySearch = ''; this.slCopyPreview = null; this.slCopyResults = null; this.slCopyAllowPartial = false;
       // Reuse the organization networks already loaded at sign-in. This avoids
       // a redundant Meraki request when opening the copy wizard.
       if (!this.networks.length && this.selectedOrgId) await this.loadNetworks();
@@ -393,15 +393,17 @@ function app() {
     async slCopyRunPreview() {
       if (!this.slCopySource || !this.slCopyDestinations.length) return;
       this.slCopyLoading = true;
-      try { this.slCopyPreview = await this.api('POST', '/api/syslog/copy/preview', { org_id: this.selectedOrgId, source: this.slCopySource, destinations: this.slCopyDestinations }); this.slCopyStep = 3; }
+      try { this.slCopyPreview = await this.api('POST', '/api/syslog/copy/preview', { org_id: this.selectedOrgId, source: this.slCopySource, destinations: this.slCopyDestinations, allow_partial: this.slCopyAllowPartial }); this.slCopyStep = 3; }
       catch (e) { this.log(`Syslog copy preview failed: ${e.message}`, 'error'); }
       finally { this.slCopyLoading = false; }
     },
     async slCopyExecute() {
-      const updates = (this.slCopyPreview || []).filter(p => p.status === 'update').length;
-      if (!updates || !confirm(`Replace syslog configuration on ${updates} compatible network(s) with ${this.slCopySource.name}?`)) return;
+      const updates = (this.slCopyPreview || []).filter(p => p.status === 'update' || p.status === 'partial').length;
+      const partials = (this.slCopyPreview || []).filter(p => p.status === 'partial').length;
+      const partialNote = partials ? ` (${partials} with unsupported roles skipped)` : '';
+      if (!updates || !confirm(`Replace syslog configuration on ${updates} compatible network(s) with ${this.slCopySource.name}${partialNote}?`)) return;
       this.slCopyLoading = true;
-      try { this.slCopyResults = await this.api('POST', '/api/syslog/copy/execute', { org_id: this.selectedOrgId, source: this.slCopySource, destinations: this.slCopyDestinations }); this.slCopyStep = 4; }
+      try { this.slCopyResults = await this.api('POST', '/api/syslog/copy/execute', { org_id: this.selectedOrgId, source: this.slCopySource, destinations: this.slCopyDestinations, allow_partial: this.slCopyAllowPartial }); this.slCopyStep = 4; }
       catch (e) { this.log(`Syslog copy failed: ${e.message}`, 'error'); }
       finally { this.slCopyLoading = false; }
     },

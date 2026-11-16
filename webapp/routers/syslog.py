@@ -28,6 +28,7 @@ class SyslogCopyRequest(BaseModel):
     org_id: str
     source: dict[str, Any]
     destinations: list[dict[str, Any]]
+    allow_partial: bool = False
 
 
 def _service(session) -> SyslogService:
@@ -114,7 +115,7 @@ def preview_syslog_copy(body: SyslogCopyRequest, session=Depends(require_csrf)) 
     if not body.destinations:
         raise HTTPException(400, "Select at least one destination network.")
     try:
-        return [_copy_preview(preview) for preview in _service(session).copy_preview(body.org_id, body.source, body.destinations)]
+        return [_copy_preview(preview) for preview in _service(session).copy_preview(body.org_id, body.source, body.destinations, body.allow_partial)]
     except ValueError as exc:
         raise HTTPException(400, str(exc))
     except Exception as exc:
@@ -126,7 +127,7 @@ def execute_syslog_copy(body: SyslogCopyRequest, session=Depends(require_csrf)) 
     if not body.destinations:
         raise HTTPException(400, "Select at least one destination network.")
     try:
-        return [_copy_result(result) for result in _service(session).copy_execute(body.org_id, body.source, body.destinations)]
+        return [_copy_result(result) for result in _service(session).copy_execute(body.org_id, body.source, body.destinations, body.allow_partial)]
     except ValueError as exc:
         raise HTTPException(400, str(exc))
     except Exception as exc:

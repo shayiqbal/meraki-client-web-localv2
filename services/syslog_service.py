@@ -187,7 +187,11 @@ class SyslogService:
         return results
 
     def copy_preview(
-        self, organization_id: str, source: dict[str, Any], destinations: list[dict[str, Any]],
+        self,
+        organization_id: str,
+        source: dict[str, Any],
+        destinations: list[dict[str, Any]],
+        allow_partial: bool = False,
     ) -> list[SyslogPreview]:
         source_id = source.get("id", "")
         if not source_id:
@@ -198,7 +202,11 @@ class SyslogService:
             raise ValueError(f"{source_name} has no syslog servers to copy.")
 
         role_catalog = self.list_roles(organization_id)["labels_by_network"]
-        source_roles = {str(role).casefold() for server in source_servers for role in server.get("roles", [])}
+        role_labels: dict[str, str] = {}
+        for server in source_servers:
+            for role in server.get("roles", []):
+                role_labels.setdefault(str(role).casefold(), str(role))
+        source_roles = set(role_labels)
         previews: list[SyslogPreview] = []
         for destination in destinations:
             network_id = destination.get("id", "")
@@ -207,26 +215,53 @@ class SyslogService:
                 previews.append(SyslogPreview(network_id, name, "invalid", "Source cannot be a destination.", [], []))
                 continue
             allowed = {role.casefold() for role in role_catalog.get(network_id, [])}
-            unsupported = sorted(source_roles - allowed)
-            if unsupported:
+            unsupported = sorted(role_labels[role] for role in source_roles - allowed)
+
+            if unsupported and not allow_partial:
                 previews.append(SyslogPreview(network_id, name, "incompatible", f"Target does not support: {', '.join(unsupported)}.", [], source_servers))
                 continue
+
+            if unsupported:
+                # Partial copy: keep only the roles the destination can actually
+                # accept, and drop any server whose roles are all unsupported.
+                proposed = []
+                for server in source_servers:
+                    kept_roles = [role for role in server["roles"] if role.casefold() in allowed]
+                    if kept_roles:
+                        proposed.append({**server, "roles": kept_roles})
+                if not proposed:
+                    previews.append(SyslogPreview(network_id, name, "incompatible", f"Target supports none of the source roles: {', '.join(unsupported)}.", [], []))
+                    continue
+            else:
+                proposed = source_servers
+
             try:
                 current = clean_servers((self.client.get_network_syslog_servers(network_id) or {}).get("servers"))
-                status = "unchanged" if current == source_servers else "update"
-                detail = "Already matches the source." if status == "unchanged" else f"Will replace all syslog servers with {source_name}."
-                previews.append(SyslogPreview(network_id, name, status, detail, current, source_servers))
+                if current == proposed:
+                    status = "unchanged"
+                    detail = "Already matches the source." if not unsupported else "Already matches the supported subset of the source."
+                elif unsupported:
+                    status = "partial"
+                    detail = f"Will copy supported roles only. Skipping unsupported roles: {', '.join(unsupported)}."
+                else:
+                    status = "update"
+                    detail = f"Will replace all syslog servers with {source_name}."
+                previews.append(SyslogPreview(network_id, name, status, detail, current, proposed))
             except Exception as exc:
-                previews.append(SyslogPreview(network_id, name, "unavailable", str(exc), [], source_servers))
+                previews.append(SyslogPreview(network_id, name, "unavailable", str(exc), [], proposed))
         return previews
 
     def copy_execute(
-        self, organization_id: str, source: dict[str, Any], destinations: list[dict[str, Any]],
+        self,
+        organization_id: str,
+        source: dict[str, Any],
+        destinations: list[dict[str, Any]],
+        allow_partial: bool = False,
     ) -> list[SyslogResult]:
-        previews = self.copy_preview(organization_id, source, destinations)
+        previews = self.copy_preview(organization_id, source, destinations, allow_partial)
         results: list[SyslogResult] = []
         for preview in previews:
-            if preview.status != "update":
+            if preview.status not in ("update", "partial"):
                 results.append(SyslogResult(preview.network_id, preview.network_name, preview.status == "unchanged", preview.status, len(preview.current_servers), "" if preview.status == "unchanged" else preview.detail))
                 continue
             try:

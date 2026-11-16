@@ -18,6 +18,7 @@ A browser-based management tool for Cisco Meraki MX networks. Run it locally or 
 | **Compare Networks** | Side-by-side diff of VPN rules, SSIDs, and appliance settings |
 | **New Network Wizard** | Create a new network cloned from a template in 6 guided steps |
 | **Syslog Servers** | Preview and bulk-configure multiple syslog destinations across all or selected networks |
+| **Copy Syslog** | Copy a network's syslog servers to other networks, with an optional **partial copy** mode that keeps only the event roles each destination actually supports instead of skipping incompatible networks entirely |
 | **Activity Log** | Timestamped log of every action taken during your session |
 
 ---

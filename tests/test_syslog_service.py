@@ -86,6 +86,43 @@ class SyslogServiceTests(unittest.TestCase):
         ])
         self.assertEqual([item.status for item in previews], ["update", "incompatible"])
 
+    def test_copy_preview_allow_partial_keeps_only_supported_roles(self) -> None:
+        self.client.settings["source"] = [
+            {"host": "log.example", "port": 514, "roles": ["Appliance event log", "Air Marshal events"]}
+        ]
+        self.client.get_organization_syslog_roles = lambda _org: {"items": [
+            {"network": {"id": "partial"}, "available": [{"value": "applianceEventLog", "name": "Appliance Event Log"}]},
+        ]}  # type: ignore[attr-defined]
+        previews = self.service.copy_preview(
+            "org", {"id": "source", "name": "Source"}, [{"id": "partial", "name": "Partial"}], allow_partial=True,
+        )
+        self.assertEqual(previews[0].status, "partial")
+        self.assertEqual(previews[0].proposed_servers, [{"host": "log.example", "port": 514, "roles": ["Appliance event log"]}])
+        self.assertIn("Air Marshal events", previews[0].detail)
+
+    def test_copy_preview_allow_partial_still_incompatible_when_no_roles_overlap(self) -> None:
+        self.client.settings["source"] = [{"host": "log.example", "port": 514, "roles": ["Air Marshal events"]}]
+        self.client.get_organization_syslog_roles = lambda _org: {"items": [
+            {"network": {"id": "incompatible"}, "available": [{"value": "applianceEventLog", "name": "Appliance Event Log"}]},
+        ]}  # type: ignore[attr-defined]
+        previews = self.service.copy_preview(
+            "org", {"id": "source", "name": "Source"}, [{"id": "incompatible", "name": "Incompatible"}], allow_partial=True,
+        )
+        self.assertEqual(previews[0].status, "incompatible")
+
+    def test_copy_execute_applies_partial_destinations(self) -> None:
+        self.client.settings["source"] = [
+            {"host": "log.example", "port": 514, "roles": ["Appliance event log", "Air Marshal events"]}
+        ]
+        self.client.get_organization_syslog_roles = lambda _org: {"items": [
+            {"network": {"id": "partial"}, "available": [{"value": "applianceEventLog", "name": "Appliance Event Log"}]},
+        ]}  # type: ignore[attr-defined]
+        results = self.service.copy_execute(
+            "org", {"id": "source", "name": "Source"}, [{"id": "partial", "name": "Partial"}], allow_partial=True,
+        )
+        self.assertEqual(results[0].status, "updated")
+        self.assertEqual(self.client.updated, [("partial", [{"host": "log.example", "port": 514, "roles": ["Appliance event log"]}])])
+
 
 if __name__ == "__main__":
     unittest.main()
