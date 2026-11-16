@@ -16,6 +16,18 @@ class _Response:
         return {"servers": []}
 
 
+class _PagedResponse:
+    status_code = 200
+    ok = True
+
+    def __init__(self, body: dict, link: str = "") -> None:
+        self._body = body
+        self.headers = {"Link": link} if link else {}
+
+    def json(self) -> dict:
+        return self._body
+
+
 class SyslogClientTests(unittest.TestCase):
     def setUp(self) -> None:
         self.client = MerakiVpnClientV1(
@@ -51,6 +63,24 @@ class SyslogClientTests(unittest.TestCase):
         self.assertEqual(request.call_args.kwargs["json"], {
             "servers": [{"host": "log.example", "port": 514, "roles": ["Appliance event log"]}]
         })
+
+    def test_get_organization_syslog_roles_follows_pagination_link(self) -> None:
+        """A network beyond the first page must not be reported as role-less."""
+        page_one = _PagedResponse(
+            {"items": [{"network": {"id": "n1"}, "available": [{"value": "applianceEventLog", "name": "Appliance Event Log"}]}]},
+            link='<https://api.meraki.com/api/v1/organizations/123/devices/syslog/servers/roles/byNetwork?perPage=1000&startingAfter=abc>; rel=next',
+        )
+        page_two = _PagedResponse(
+            {"items": [{"network": {"id": "n2"}, "available": [{"value": "airMarshalEvents", "name": "Air Marshal Events"}]}]},
+            link="",
+        )
+        with patch("meraki_client.client_v1.requests.request", side_effect=[page_one, page_two]) as request:
+            result = self.client.get_organization_syslog_roles("123")
+
+        self.assertEqual(request.call_count, 2)
+        self.assertEqual(request.call_args_list[1].args[1], "https://api.meraki.com/api/v1/organizations/123/devices/syslog/servers/roles/byNetwork?perPage=1000&startingAfter=abc")
+        network_ids = [item["network"]["id"] for item in result["items"]]
+        self.assertEqual(network_ids, ["n1", "n2"])
 
 
 if __name__ == "__main__":

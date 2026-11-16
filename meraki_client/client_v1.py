@@ -272,14 +272,34 @@ class MerakiVpnClientV1(MerakiVpnClient):
             "PUT", f"/networks/{network_id}/syslogServers", {"servers": legacy_servers}
         )
 
-    def get_organization_syslog_roles(self, organization_id: str) -> Any:
-        return self._syslog_request(
-            "GET", f"/organizations/{organization_id}/devices/syslog/servers/roles/byNetwork?perPage=1000"
-        )
+    def get_organization_syslog_roles(self, organization_id: str) -> dict[str, Any]:
+        """Return every network's available syslog roles across all pages.
+
+        The byNetwork endpoint paginates via a ``Link`` header. Fetching only
+        the first page would silently report zero supported roles for any
+        network beyond it, which made Copy Syslog treat every role -
+        including Air Marshal - as unsupported for large organizations.
+        """
+        items: list[Any] = []
+        path = f"/organizations/{organization_id}/devices/syslog/servers/roles/byNetwork?perPage=1000"
+        while path:
+            body, link_header = self._syslog_page("GET", path)
+            page_items = body.get("items", []) if isinstance(body, dict) else body
+            items.extend(page_items or [])
+            path = self._next_page_path(link_header)
+        return {"items": items}
 
     def _syslog_request(self, method: str, path: str, payload: dict[str, Any] | None = None) -> dict[str, Any]:
         """Call the current syslog endpoint not yet exposed by the pinned SDK."""
+        body, _ = self._syslog_page(method, path, payload)
+        return body
+
+    def _syslog_page(
+        self, method: str, path: str, payload: dict[str, Any] | None = None
+    ) -> tuple[dict[str, Any], str]:
+        """Call a syslog endpoint and also return its raw Link header for pagination."""
         headers = {"Authorization": f"Bearer {self.settings.api_key}", "X-Cisco-Meraki-API-Key": self.settings.api_key, "Content-Type": "application/json"}
+        captured: dict[str, str] = {}
 
         def _do() -> dict[str, Any]:
             response = requests.request(method, f"https://api.meraki.com/api/v1{path}", json=payload, headers=headers, timeout=30)
@@ -287,9 +307,28 @@ class MerakiVpnClientV1(MerakiVpnClient):
                 raise MerakiClientError("Rate-limited by Meraki. Retrying…")
             if not response.ok:
                 raise MerakiClientError(f"syslog request failed: HTTP {response.status_code} — {response.text[:200]}")
+            response_headers = getattr(response, "headers", None)
+            captured["link"] = response_headers.get("Link", "") if response_headers else ""
             return response.json()
 
-        return self._call(_do, f"{method.lower()} syslog servers", path=path)
+        body = self._call(_do, f"{method.lower()} syslog servers", path=path)
+        return body, captured.get("link", "")
+
+    @staticmethod
+    def _next_page_path(link_header: str) -> str | None:
+        """Extract the relative 'next' page path from a Meraki Link header."""
+        if not link_header:
+            return None
+        for part in link_header.split(","):
+            segment = part.strip()
+            if "next" not in segment.split(";", 1)[-1]:
+                continue
+            start, end = segment.find("<"), segment.find(">")
+            if start == -1 or end == -1:
+                continue
+            url = segment[start + 1:end]
+            return url.removeprefix("https://api.meraki.com/api/v1")
+        return None
 
     # ── Group policies ─────────────────────────────────────────────────────────
 
